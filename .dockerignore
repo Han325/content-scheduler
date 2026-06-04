@@ -1,0 +1,8 @@
+.env
+token.json
+lineup.db
+__pycache__/
+*.pyc
+*.pyo
+.git/
+.gitignore

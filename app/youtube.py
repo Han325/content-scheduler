@@ -21,7 +21,7 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
-TOKEN_FILE = "token.json"
+TOKEN_FILE = settings.TOKEN_FILE
 SCOPES = ["https://www.googleapis.com/auth/youtube.readonly"]
 
 # Holds the active OAuth flow between /auth and /auth/callback

@@ -8,6 +8,7 @@ class Settings:
     YOUTUBE_CLIENT_ID: str = os.getenv("YOUTUBE_CLIENT_ID", "")
     YOUTUBE_CLIENT_SECRET: str = os.getenv("YOUTUBE_CLIENT_SECRET", "")
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./lineup.db")
+    TOKEN_FILE: str = os.getenv("TOKEN_FILE", "token.json")
     PRIMETIME_START: str = os.getenv("PRIMETIME_START", "19:00")
     PRIMETIME_END: str = os.getenv("PRIMETIME_END", "22:00")
     DAILY_BUDGET_MINUTES: int = int(os.getenv("DAILY_BUDGET_MINUTES", "90"))
