@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+
+{% block title %}Lineup — {{ today }}{% endblock %}
+
+{% block content %}
+<header class="site-header">
+  <span class="site-name">LINEUP</span>
+  <span class="site-date">{{ today }}</span>
+</header>
+<hr class="header-rule">
+
+<div class="status-bar">
+  <span class="status-dot {% if is_primetime %}dot-active{% else %}dot-inactive{% endif %}"></span>
+  <span class="status-label">
+    {% if is_primetime %}
+      On now &mdash; available until {{ primetime_end }}
+    {% else %}
+      Available {{ primetime_start }}–{{ primetime_end }}
+    {% endif %}
+  </span>
+</div>
+
+{% if slots %}
+<div class="budget-section">
+  <div class="budget-label">
+    <span>Tonight's lineup</span>
+    <span class="muted">{{ format_duration(total_seconds) }} total</span>
+  </div>
+  <div class="budget-bar-track">
+    <div class="budget-bar-fill" style="width: {{ budget_used_pct }}%"></div>
+  </div>
+</div>
+{% endif %}
+
+{% if all_watched %}
+<div class="done-message">
+  That's all for tonight.<br>See you tomorrow.
+</div>
+{% elif not slots %}
+<div class="empty-message">
+  <p>No lineup yet for today.</p>
+  {% if not is_primetime %}
+  <p class="muted small">The lineup is built at 6:00 PM. You can also trigger it manually:</p>
+  {% endif %}
+  <form method="post" action="/refresh" class="refresh-form">
+    <button type="submit" class="btn-refresh">Build today's lineup</button>
+  </form>
+</div>
+{% else %}
+<ul class="video-list">
+  {% for slot in slots %}
+  <li class="video-row {% if slot.is_watched %}is-watched{% endif %}" data-youtube-id="{{ slot.video.youtube_id }}">
+    <div class="video-meta">
+      <span class="channel-name">{{ slot.video.channel_name }}</span>
+      <span class="video-title">{{ slot.video.title }}</span>
+      <div class="video-tags">
+        <span class="tag">{{ format_duration(slot.video.duration_seconds) }}</span>
+        {% if slot.video.category != "general" %}
+        <span class="tag tag-category">{{ slot.video.category }}</span>
+        {% endif %}
+      </div>
+    </div>
+    <div class="video-action">
+      {% if slot.is_watched %}
+        <span class="watched-indicator" title="Watched">&#10003;</span>
+      {% elif is_primetime %}
+        <button
+          class="play-btn"
+          onclick="playVideo('{{ slot.video.youtube_id }}')"
+          title="Watch on YouTube"
+        >&#9654;</button>
+      {% else %}
+        <span class="locked-indicator" title="Available at {{ primetime_start }}">&#128274;</span>
+      {% endif %}
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+<footer class="site-footer">
+  <a href="/ondemand">On Demand</a>
+  <span class="footer-sep">&middot;</span>
+  <a href="/history">History</a>
+  <span class="footer-sep">&middot;</span>
+  <a href="/api/status">Status</a>
+</footer>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function playVideo(youtubeId) {
+  // Mark as watched first
+  try {
+    await fetch(`/watch/${youtubeId}`, { method: 'POST' });
+  } catch (e) {
+    console.warn('Could not mark as watched:', e);
+  }
+  // Open YouTube
+  window.open(`https://www.youtube.com/watch?v=${youtubeId}`, '_blank');
+  // Update UI without full reload
+  const row = document.querySelector(`[data-youtube-id="${youtubeId}"]`);
+  if (row) {
+    row.classList.add('is-watched');
+    const action = row.querySelector('.video-action');
+    if (action) {
+      action.innerHTML = '<span class="watched-indicator" title="Watched">&#10003;</span>';
+    }
+  }
+  // Check if all done
+  const unwatched = document.querySelectorAll('.video-row:not(.is-watched)');
+  if (unwatched.length === 0) {
+    setTimeout(() => location.reload(), 500);
+  }
+}
+</script>
+{% endblock %}

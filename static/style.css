@@ -1,0 +1,435 @@
+/* ===================================================================
+   Content Scheduler — Scandinavian aesthetic
+   Warm minimalist, TV schedule inspired.
+   Mobile-first, max-width 680px, no shadows, borders only.
+   =================================================================== */
+
+/* --- Design tokens --- */
+:root {
+  --bg: #F4EFE6;
+  --bg-dark: #1C1A17;
+  --text: #1C1A17;
+  --text-muted: #8C8070;
+  --accent: #5C7A6B;
+  --accent-light: #E8EDE9;
+  --border: #DDD5C8;
+  --surface: #FDFAF5;
+  --font: "DM Sans", system-ui, -apple-system, sans-serif;
+  --radius: 0px;
+}
+
+/* --- Reset & base --- */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-weight: 400;
+  line-height: 1.6;
+  min-height: 100vh;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+/* --- Layout --- */
+.container {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 2rem 1.25rem 4rem;
+}
+
+/* --- Header --- */
+.site-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding-bottom: 0.75rem;
+}
+
+.site-name {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.site-name a {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.site-date {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  letter-spacing: 0.03em;
+}
+
+.header-rule {
+  border: none;
+  border-top: 1.5px solid var(--border);
+  margin-bottom: 1.5rem;
+}
+
+/* --- Status bar --- */
+.status-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.status-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dot-active {
+  background: var(--accent);
+}
+
+.dot-inactive {
+  background: var(--border);
+}
+
+.status-label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+
+/* --- Budget bar --- */
+.budget-section {
+  margin-bottom: 1.75rem;
+}
+
+.budget-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 0.4rem;
+}
+
+.budget-bar-track {
+  height: 2px;
+  background: var(--border);
+  width: 100%;
+}
+
+.budget-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.4s ease;
+}
+
+/* --- Video list --- */
+.video-list {
+  list-style: none;
+  border-top: 1px solid var(--border);
+}
+
+.video-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.9rem 0;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.15s ease;
+}
+
+.video-row:hover {
+  background: var(--accent-light);
+  margin: 0 -1.25rem;
+  padding-left: 1.25rem;
+  padding-right: 1.25rem;
+}
+
+.video-row.is-watched {
+  opacity: 0.45;
+}
+
+.video-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.channel-name {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 0.15rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.video-title {
+  display: block;
+  font-size: 0.95rem;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--text);
+  /* clamp to 2 lines */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.video-tags {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.tag {
+  font-size: 0.65rem;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  padding: 0.1rem 0.4rem;
+  background: var(--surface);
+}
+
+.tag-category {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.tag-muted {
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+/* --- Action buttons --- */
+.video-action {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+}
+
+.play-btn {
+  background: none;
+  border: 1.5px solid var(--border);
+  color: var(--text);
+  font-size: 0.85rem;
+  width: 2.25rem;
+  height: 2.25rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.play-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-light);
+}
+
+.locked-indicator {
+  font-size: 1rem;
+  color: var(--border);
+  cursor: default;
+  user-select: none;
+}
+
+.watched-indicator {
+  font-size: 0.9rem;
+  color: var(--accent);
+}
+
+.rewatch-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border: 1.5px solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  text-decoration: none;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.rewatch-link:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  text-decoration: none;
+}
+
+/* --- Done / empty messages --- */
+.done-message {
+  text-align: center;
+  padding: 3rem 1rem;
+  font-size: 1.4rem;
+  font-weight: 300;
+  line-height: 1.5;
+  color: var(--text-muted);
+  letter-spacing: 0.01em;
+}
+
+.empty-message {
+  padding: 2rem 0;
+  color: var(--text-muted);
+}
+
+.empty-message p {
+  margin-bottom: 0.5rem;
+}
+
+/* --- On-demand warning --- */
+.ondemand-warning {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+  margin-bottom: 0.5rem;
+  border-left: 2px solid var(--border);
+  padding-left: 0.75rem;
+}
+
+.backlog-total {
+  margin-bottom: 1rem;
+}
+
+/* --- History --- */
+.history-group {
+  margin-bottom: 2rem;
+}
+
+.history-date-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 0.25rem;
+}
+
+/* --- Refresh form --- */
+.refresh-form {
+  margin-top: 1rem;
+}
+
+.btn-refresh {
+  background: none;
+  border: 1.5px solid var(--border);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.btn-refresh:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* --- Utilities --- */
+.muted {
+  color: var(--text-muted);
+}
+
+.small {
+  font-size: 0.8rem;
+}
+
+/* --- Footer --- */
+.site-footer {
+  margin-top: 3rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.site-footer a {
+  color: var(--text-muted);
+}
+
+.site-footer a:hover {
+  color: var(--accent);
+}
+
+.footer-sep {
+  color: var(--border);
+}
+
+/* ===================================================================
+   Dark mode
+   =================================================================== */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1C1A17;
+    --text: #EDE8DE;
+    --text-muted: #6B6255;
+    --accent: #7A9E8E;
+    --accent-light: #252320;
+    --border: #2E2B26;
+    --surface: #232119;
+  }
+
+  .play-btn {
+    color: var(--text);
+  }
+
+  .tag {
+    background: var(--surface);
+  }
+}
+
+/* ===================================================================
+   Mobile tweaks
+   =================================================================== */
+@media (max-width: 480px) {
+  .container {
+    padding: 1.25rem 1rem 3rem;
+  }
+
+  .video-title {
+    font-size: 0.9rem;
+  }
+
+  .done-message {
+    font-size: 1.2rem;
+  }
+}

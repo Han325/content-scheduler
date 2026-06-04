@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+
+{% block title %}On Demand{% endblock %}
+
+{% block content %}
+<header class="site-header">
+  <span class="site-name"><a href="/">LINEUP</a></span>
+  <span class="site-date">On Demand</span>
+</header>
+<hr class="header-rule">
+
+<div class="ondemand-warning">
+  This is the backlog. It'll cost you time.
+</div>
+
+{% if backlog %}
+<div class="backlog-total muted small">
+  {{ backlog | length }} video{{ 's' if backlog | length != 1 else '' }} &mdash; {{ format_duration(total_seconds) }} total
+</div>
+
+<ul class="video-list">
+  {% for entry in backlog %}
+  <li class="video-row" data-youtube-id="{{ entry.video.youtube_id }}">
+    <div class="video-meta">
+      <span class="channel-name">{{ entry.video.channel_name }}</span>
+      <span class="video-title">{{ entry.video.title }}</span>
+      <div class="video-tags">
+        <span class="tag">{{ format_duration(entry.video.duration_seconds) }}</span>
+        {% if entry.video.category != "general" %}
+        <span class="tag tag-category">{{ entry.video.category }}</span>
+        {% endif %}
+      </div>
+    </div>
+    <div class="video-action">
+      <button
+        class="play-btn"
+        onclick="playVideo('{{ entry.video.youtube_id }}')"
+        title="Watch on YouTube"
+      >&#9654;</button>
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<div class="empty-message">
+  <p class="muted">The backlog is empty.</p>
+  <p class="small muted">Videos that don't make tonight's lineup end up here.</p>
+</div>
+{% endif %}
+
+<footer class="site-footer">
+  <a href="/">Lineup</a>
+  <span class="footer-sep">&middot;</span>
+  <a href="/history">History</a>
+</footer>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function playVideo(youtubeId) {
+  try {
+    await fetch(`/watch/${youtubeId}`, { method: 'POST' });
+  } catch (e) {
+    console.warn('Could not mark as watched:', e);
+  }
+  window.open(`https://www.youtube.com/watch?v=${youtubeId}`, '_blank');
+  const row = document.querySelector(`[data-youtube-id="${youtubeId}"]`);
+  if (row) {
+    row.style.opacity = '0.4';
+    const action = row.querySelector('.video-action');
+    if (action) {
+      action.innerHTML = '<span class="watched-indicator">&#10003;</span>';
+    }
+    setTimeout(() => row.remove(), 1200);
+  }
+}
+</script>
+{% endblock %}
