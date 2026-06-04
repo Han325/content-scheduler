@@ -97,9 +97,9 @@ def lineup_page(request: Request, db: Session = Depends(get_db)):
     all_watched = slots and all(s.is_watched for s in slots)
 
     return templates.TemplateResponse(
-        "lineup.html",
-        {
-            "request": request,
+        request=request,
+        name="lineup.html",
+        context={
             "slots": slots,
             "is_primetime": _is_primetime(),
             "primetime_start": settings.PRIMETIME_START,
@@ -126,9 +126,9 @@ def ondemand_page(request: Request, db: Session = Depends(get_db)):
     total_seconds = sum(e.video.duration_seconds for e in backlog)
 
     return templates.TemplateResponse(
-        "ondemand.html",
-        {
-            "request": request,
+        request=request,
+        name="ondemand.html",
+        context={
             "backlog": backlog,
             "total_seconds": total_seconds,
             "is_primetime": _is_primetime(),
@@ -185,9 +185,9 @@ def history_page(request: Request, db: Session = Depends(get_db)):
         })
 
     return templates.TemplateResponse(
-        "history.html",
-        {
-            "request": request,
+        request=request,
+        name="history.html",
+        context={
             "grouped": grouped,
         },
     )
