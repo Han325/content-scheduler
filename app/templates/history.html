@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block title %}Watch History{% endblock %}
+
+{% block content %}
+<header class="site-header">
+  <span class="site-name"><a href="/">LINEUP</a></span>
+  <span class="site-date">History</span>
+</header>
+<hr class="header-rule">
+
+{% if grouped %}
+  {% for group in grouped %}
+  <div class="history-group">
+    <div class="history-date-label">{{ group.date }}</div>
+    <ul class="video-list">
+      {% for entry in group.entries %}
+      <li class="video-row is-watched">
+        <div class="video-meta">
+          <span class="channel-name">{{ entry.video.channel_name }}</span>
+          <span class="video-title">{{ entry.video.title }}</span>
+          <div class="video-tags">
+            <span class="tag">{{ format_duration(entry.video.duration_seconds) }}</span>
+            {% if entry.source == "backlog" %}<span class="tag tag-muted">backlog</span>{% endif %}
+          </div>
+        </div>
+        <div class="video-action">
+          <a href="https://www.youtube.com/watch?v={{ entry.video.youtube_id }}" target="_blank" class="rewatch-link">&#9654;</a>
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endfor %}
+{% else %}
+<div class="empty-message">
+  <p class="muted">Nothing watched yet.</p>
+</div>
+{% endif %}
+
+<footer class="site-footer">
+  <a href="/">Lineup</a>
+  <span class="footer-sep">&middot;</span>
+  <a href="/ondemand">On Demand</a>
+</footer>
+{% endblock %}
