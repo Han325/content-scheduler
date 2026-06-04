@@ -40,7 +40,7 @@ CHANNEL_WHITELIST: list[str] = [
 
 def _client_config() -> dict:
     return {
-        "web": {
+        "installed": {
             "client_id": settings.YOUTUBE_CLIENT_ID,
             "client_secret": settings.YOUTUBE_CLIENT_SECRET,
             "redirect_uris": ["http://localhost:8000/auth/callback"],
