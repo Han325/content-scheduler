@@ -24,6 +24,9 @@ logger = logging.getLogger(__name__)
 TOKEN_FILE = "token.json"
 SCOPES = ["https://www.googleapis.com/auth/youtube.readonly"]
 
+# Holds the active OAuth flow between /auth and /auth/callback
+_pending_flow: Optional["Flow"] = None
+
 TOPIC_QUERIES = [
     "geopolitics explained 2025",
     "world news analysis",
@@ -85,18 +88,22 @@ def _save_credentials(creds: Credentials) -> None:
 
 
 def get_auth_flow(redirect_uri: str = "http://localhost:8000/auth/callback") -> Flow:
-    """Create OAuth flow for the consent screen."""
+    global _pending_flow
     flow = Flow.from_client_config(_client_config(), scopes=SCOPES)
     flow.redirect_uri = redirect_uri
+    _pending_flow = flow
     return flow
 
 
 def exchange_code_for_token(code: str, state: str) -> Credentials:
-    """Exchange auth code for credentials and save to token.json."""
-    flow = get_auth_flow()
+    global _pending_flow
+    flow = _pending_flow
+    if flow is None:
+        raise ValueError("No pending OAuth flow. Visit /auth to start authentication.")
     flow.fetch_token(code=code)
     creds = flow.credentials
     _save_credentials(creds)
+    _pending_flow = None
     return creds
 
 
