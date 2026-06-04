@@ -25,6 +25,17 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
 
 
+def _format_duration(seconds: int) -> str:
+    m, s = divmod(seconds, 60)
+    h, m = divmod(m, 60)
+    if h:
+        return f"{h}h {m}m"
+    return f"{m}m"
+
+
+templates.env.globals["format_duration"] = _format_duration
+
+
 # ---------------------------------------------------------------------------
 # Startup / shutdown
 # ---------------------------------------------------------------------------
@@ -54,14 +65,6 @@ def _is_primetime() -> bool:
     start = time(settings.primetime_start_hour, settings.primetime_start_minute)
     end = time(settings.primetime_end_hour, settings.primetime_end_minute)
     return start <= now <= end
-
-
-def _format_duration(seconds: int) -> str:
-    m, s = divmod(seconds, 60)
-    h, m = divmod(m, 60)
-    if h:
-        return f"{h}h {m}m"
-    return f"{m}m"
 
 
 def _get_todays_lineup(db: Session) -> list[LineupSlot]:
@@ -106,7 +109,6 @@ def lineup_page(request: Request, db: Session = Depends(get_db)):
             "total_seconds": total_seconds,
             "budget_used_pct": budget_used_pct,
             "all_watched": all_watched,
-            "format_duration": _format_duration,
             "today": date.today().strftime("%A, %B %d").replace(" 0", " "),
         },
     )
@@ -128,7 +130,6 @@ def ondemand_page(request: Request, db: Session = Depends(get_db)):
             "request": request,
             "backlog": backlog,
             "total_seconds": total_seconds,
-            "format_duration": _format_duration,
             "is_primetime": _is_primetime(),
         },
     )
@@ -187,7 +188,6 @@ def history_page(request: Request, db: Session = Depends(get_db)):
         {
             "request": request,
             "grouped": grouped,
-            "format_duration": _format_duration,
         },
     )
 
