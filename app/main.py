@@ -107,7 +107,7 @@ def lineup_page(request: Request, db: Session = Depends(get_db)):
             "budget_used_pct": budget_used_pct,
             "all_watched": all_watched,
             "format_duration": _format_duration,
-            "today": date.today().strftime("%A, %B %-d"),
+            "today": date.today().strftime("%A, %B %d").replace(" 0", " "),
         },
     )
 
@@ -178,7 +178,7 @@ def history_page(request: Request, db: Session = Depends(get_db)):
     grouped = []
     for d, group in groupby(entries, key=date_key):
         grouped.append({
-            "date": d.strftime("%A, %B %-d"),
+            "date": d.strftime("%A, %B %d").replace(" 0", " "),
             "entries": list(group),
         })
 
