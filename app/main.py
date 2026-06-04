@@ -23,6 +23,7 @@ app = FastAPI(title="Content Scheduler", docs_url=None, redoc_url=None)
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
+templates.env.cache = None  # newer Jinja2 includes env.globals in cache key, making it unhashable
 
 
 def _format_duration(seconds: int) -> str:
