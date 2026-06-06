@@ -67,7 +67,7 @@ CHANNEL_WHITELIST: list[str] = [
 ]
 
 # ISO 3166-1 alpha-2 country codes to exclude entirely
-CHANNEL_COUNTRY_BLOCKLIST: set[str] = {"IN"}
+CHANNEL_COUNTRY_BLOCKLIST: set[str] = {"IN", "PK", "ID"}
 
 
 def _client_config() -> dict:

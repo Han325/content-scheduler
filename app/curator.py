@@ -32,13 +32,43 @@ TITLE_BLACKLIST_PATTERNS = [
     re.compile(r"#shorts", re.IGNORECASE),
     # Language tags (Romanized or explicit)
     re.compile(r"\b(hindi|telugu|tamil|kannada|malayalam|punjabi|bengali|marathi|gujarati|urdu|odia|hinglish)\b", re.IGNORECASE),
-    re.compile(r"\b(mein|hai|kaise|kya|aur|nahi|bahut|accha|theek|bilkul|lekin)\b"),  # common Romanized Hindi words
+    re.compile(r"\b(mein|hai|kaise|kya|aur|nahi|bahut|accha|theek|bilkul|lekin)\b"),
     # Exam / academic junk
     re.compile(r"\b(exam\s*paper|past\s*paper|model\s*paper|question\s*paper|solved\s*paper|answer\s*key)\b", re.IGNORECASE),
     re.compile(r"\b(mcqs?|ssc|upsc|jee|neet|ias|ips|gate\s*exam|board\s*exam)\b", re.IGNORECASE),
     re.compile(r"\b(solutions?\s*(paper|set|class)|class\s*\d+\s*(maths?|science|physics|chemistry|biology))\b", re.IGNORECASE),
     re.compile(r"\b(lecture\s*\d+|chapter\s*\d+|full\s*course|crash\s*course|complete\s*course)\b", re.IGNORECASE),
+    # News broadcast re-uploads and live TV rips
+    re.compile(r"\bfull\s+(episode|show|broadcast)\b", re.IGNORECASE),
+    re.compile(r"\b(morning|evening|tonight|today'?s?|latest|breaking)\s+headlines?\b", re.IGNORECASE),
+    re.compile(r"\b\d+\s*(am|pm)\s+headlines?\b", re.IGNORECASE),
+    re.compile(r"\d{3,4}[pP]\s*(hd|HD)?\s*$"),  # ends in "1080P HD" — pirated rip
+    re.compile(r"\|\s*\w[\w\s]{1,25}(tv|news|channel)\s*$", re.IGNORECASE),  # "| Sathiyam TV" title branding
+    # Regional South Asian content (Latin-script but clearly regional)
+    re.compile(r"\b(operation\s+sindoor|pahalgam|imran\s+khan|adiala|tollywood|lollywood)\b", re.IGNORECASE),
+    re.compile(r"\b(ram\s+charan|buchi\s+babu|prabhas|allu\s+arjun|vijay\s+devarakonda)\b", re.IGNORECASE),
+    re.compile(r"\b(zee\s+news|ndtv|aaj\s+tak|india\s+tv|times\s+now|sathiyam|sun\s+tv)\b", re.IGNORECASE),
+    # Offensive language
+    re.compile(r"\bretards?\b", re.IGNORECASE),
+    re.compile(r"\b(nigger|faggot|tranny)\b", re.IGNORECASE),
 ]
+
+MAX_PER_CHANNEL = 2  # max videos from the same channel in one lineup
+
+# Emoji Unicode ranges
+_EMOJI_RANGES = [
+    (0x1F300, 0x1FAFF),  # Misc symbols, emoticons, transport, supplemental
+    (0x2600, 0x27BF),    # Misc symbols and dingbats
+]
+
+
+def _emoji_count(text: str) -> int:
+    count = 0
+    for c in text:
+        cp = ord(c)
+        if any(lo <= cp <= hi for lo, hi in _EMOJI_RANGES):
+            count += 1
+    return count
 
 CAPS_THRESHOLD = 0.40  # >40% uppercase letters = filter out
 
@@ -92,6 +122,8 @@ def _passes_title_filter(title: str) -> bool:
     if _is_excessive_caps(title):
         return False
     if any(_is_non_latin(c) for c in title):
+        return False
+    if _emoji_count(title) >= 2:
         return False
     return True
 
@@ -219,12 +251,16 @@ def build_lineup(
 
     lineup: list[Video] = []
     total_seconds = 0
+    channel_counts: dict[str, int] = {}
 
     for video in sorted_videos:
         if total_seconds >= target_seconds:
             break
+        if channel_counts.get(video.channel_id, 0) >= MAX_PER_CHANNEL:
+            continue
         lineup.append(video)
         total_seconds += video.duration_seconds
+        channel_counts[video.channel_id] = channel_counts.get(video.channel_id, 0) + 1
 
     logger.info(
         f"Built lineup: {len(lineup)} videos, "
@@ -275,6 +311,16 @@ def run_daily_curation(db: Session) -> dict:
 
     today = date.today()
     logger.info(f"Starting daily curation for {today}")
+
+    # Clear today's unwatched slots so each Refresh produces a clean lineup
+    stale = db.query(LineupSlot).filter(
+        LineupSlot.date == today,
+        LineupSlot.is_watched == False,  # noqa: E712
+    ).all()
+    for slot in stale:
+        db.delete(slot)
+    db.commit()
+
     _clean_backlog(db)
 
     # Fetch
