@@ -7,3 +7,4 @@ token.json
 lineup.db
 *.db
 .DS_Store
+.claude/

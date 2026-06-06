@@ -1,38 +1,66 @@
 {% extends "base.html" %}
-
-{% block title %}Watch History{% endblock %}
+{% block title %}History — Lineup{% endblock %}
 
 {% block content %}
-<header class="site-header">
-  <span class="site-name"><a href="/">LINEUP</a></span>
-  <span class="site-date">History</span>
+<header class="masthead">
+  <div class="ident">
+    <a href="/" class="ident-mark">Lineup</a>
+    <div class="bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+  </div>
+  <nav class="channel-nav">
+    <a href="/" class="nav-tab">Tonight</a>
+    <a href="/ondemand" class="nav-tab">On Demand</a>
+    <a href="/history" class="nav-tab is-active">History</a>
+    <button class="nav-refresh" id="refresh-btn" onclick="triggerRefresh()">&#8635; Refresh</button>
+  </nav>
+  <div class="broadcast-clock">
+    <span class="clock-time" id="clock-time">--:--:--</span>
+    <span class="clock-date" id="clock-date"></span>
+    {% if quota is defined %}
+    <div class="quota-mini">
+      <div class="quota-track"><div class="quota-fill" style="width: {{ [quota.used / quota.limit * 100, 100] | min | int }}%"></div></div>
+      <span class="quota-label">{{ quota.used }}&thinsp;/&thinsp;{{ quota.limit }} API units</span>
+    </div>
+    {% endif %}
+  </div>
 </header>
-<hr class="header-rule">
+<div class="masthead-rule"></div>
+
+<div class="section-head">
+  <div class="section-kicker">The Record</div>
+  <h1 class="section-title">History</h1>
+  <p class="section-sub">Everything you&rsquo;ve watched, by the night it aired.</p>
+</div>
 
 {% if grouped %}
   {% for group in grouped %}
-  <div class="history-group">
-    <div class="history-date-label">{{ group.date }}</div>
-    <ul class="video-list">
+  <div class="day-group">
+    <div class="day-label">
+      <span>{{ group.date }}</span>
+      <span class="day-count">{{ group.entries|length }} watched &middot; {{ format_duration(group.entries|sum(attribute='video.duration_seconds')) }}</span>
+    </div>
+    <ul class="rundown no-rail">
       {% for entry in group.entries %}
-      <li class="video-row is-watched">
-        <div class="video-meta">
-          <span class="channel-name">{{ entry.video.channel_name }}</span>
-          <span class="video-title">{{ entry.video.title }}</span>
-          <div class="video-tags">
-            <span class="tag">{{ format_duration(entry.video.duration_seconds) }}</span>
-            {% if entry.source == "backlog" %}
-            <span class="tag tag-muted">backlog</span>
-            {% endif %}
+      <li class="program is-watched">
+        <div class="slot-time">
+          <span class="slot-num">&#10003;</span>
+        </div>
+        <div class="prog-meta">
+          <div class="prog-channel">
+            {{ entry.video.channel_name }}
+            <span class="dur">&middot; {{ format_duration(entry.video.duration_seconds) }}</span>
+          </div>
+          <div class="prog-title">{{ entry.video.title }}</div>
+          <div class="prog-tags">
+            <span class="tag">{{ 'On demand' if entry.source == 'backlog' else 'Lineup' }}</span>
           </div>
         </div>
-        <div class="video-action">
-          <a
-            href="https://www.youtube.com/watch?v={{ entry.video.youtube_id }}"
-            target="_blank"
-            class="rewatch-link"
-            title="Rewatch on YouTube"
-          >&#9654;</a>
+        <div class="prog-action">
+          <a href="https://www.youtube.com/watch?v={{ entry.video.youtube_id }}"
+             target="_blank"
+             class="btn-play">
+            <span class="tri">&#8635;</span> Rewatch
+          </a>
         </div>
       </li>
       {% endfor %}
@@ -40,15 +68,9 @@
   </div>
   {% endfor %}
 {% else %}
-<div class="empty-message">
-  <p class="muted">Nothing watched yet.</p>
-  <p class="small muted">Your watch history will appear here.</p>
+<div class="notice">
+  <div class="notice-title">Nothing<br>watched yet</div>
+  <div class="notice-sub">Your viewing record will appear here.</div>
 </div>
 {% endif %}
-
-<footer class="site-footer">
-  <a href="/">Lineup</a>
-  <span class="footer-sep">&middot;</span>
-  <a href="/ondemand">On Demand</a>
-</footer>
 {% endblock %}

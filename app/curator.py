@@ -23,15 +23,52 @@ TRAILER_MIN = 60
 TRAILER_MAX = 4 * 60       # 4 minutes
 
 TITLE_BLACKLIST_PATTERNS = [
+    # Reaction / low-effort formats
     re.compile(r"\breact(s|ed|ing)\b", re.IGNORECASE),
     re.compile(r"\bi tried\b", re.IGNORECASE),
     re.compile(r"\branking every\b", re.IGNORECASE),
     re.compile(r"\bvs\.", re.IGNORECASE),
     re.compile(r"\bchallenge\b", re.IGNORECASE),
     re.compile(r"#shorts", re.IGNORECASE),
+    # Language tags (Romanized or explicit)
+    re.compile(r"\b(hindi|telugu|tamil|kannada|malayalam|punjabi|bengali|marathi|gujarati|urdu|odia|hinglish)\b", re.IGNORECASE),
+    re.compile(r"\b(mein|hai|kaise|kya|aur|nahi|bahut|accha|theek|bilkul|lekin)\b"),  # common Romanized Hindi words
+    # Exam / academic junk
+    re.compile(r"\b(exam\s*paper|past\s*paper|model\s*paper|question\s*paper|solved\s*paper|answer\s*key)\b", re.IGNORECASE),
+    re.compile(r"\b(mcqs?|ssc|upsc|jee|neet|ias|ips|gate\s*exam|board\s*exam)\b", re.IGNORECASE),
+    re.compile(r"\b(solutions?\s*(paper|set|class)|class\s*\d+\s*(maths?|science|physics|chemistry|biology))\b", re.IGNORECASE),
+    re.compile(r"\b(lecture\s*\d+|chapter\s*\d+|full\s*course|crash\s*course|complete\s*course)\b", re.IGNORECASE),
 ]
 
 CAPS_THRESHOLD = 0.40  # >40% uppercase letters = filter out
+
+# Unicode ranges for non-Latin scripts
+_NON_LATIN_RANGES = [
+    (0x0600, 0x06FF),  # Arabic / Urdu
+    (0x0900, 0x097F),  # Devanagari (Hindi)
+    (0x0980, 0x09FF),  # Bengali
+    (0x0A00, 0x0A7F),  # Gurmukhi (Punjabi)
+    (0x0A80, 0x0AFF),  # Gujarati
+    (0x0B00, 0x0B7F),  # Odia
+    (0x0B80, 0x0BFF),  # Tamil
+    (0x0C00, 0x0C7F),  # Telugu
+    (0x0C80, 0x0CFF),  # Kannada
+    (0x0D00, 0x0D7F),  # Malayalam
+    (0x0D80, 0x0DFF),  # Sinhala
+    (0x0E00, 0x0E7F),  # Thai
+    (0x0E80, 0x0EFF),  # Lao
+    (0x1000, 0x109F),  # Myanmar / Burmese
+    (0x1780, 0x17FF),  # Khmer
+    (0x3040, 0x30FF),  # Hiragana + Katakana
+    (0x4E00, 0x9FFF),  # CJK (Chinese/Japanese/Korean)
+    (0xAC00, 0xD7AF),  # Hangul
+    (0x1E00, 0x1EFF),  # Latin Extended Additional (heavy Vietnamese diacritics)
+]
+
+
+def _is_non_latin(c: str) -> bool:
+    cp = ord(c)
+    return any(start <= cp <= end for start, end in _NON_LATIN_RANGES)
 
 
 def _is_excessive_caps(title: str) -> bool:
@@ -53,6 +90,8 @@ def _passes_title_filter(title: str) -> bool:
         if pattern.search(title):
             return False
     if _is_excessive_caps(title):
+        return False
+    if any(_is_non_latin(c) for c in title):
         return False
     return True
 
@@ -143,6 +182,8 @@ def filter_videos(
     for video in videos:
         if video.youtube_id in excluded:
             continue
+        if getattr(video, "dismissed", False):
+            continue
         if not _passes_duration_filter(video.duration_seconds, video.category):
             logger.debug(f"Filtered (duration): {video.title} ({video.duration_seconds}s)")
             continue
@@ -164,7 +205,7 @@ def build_lineup(
     Returns ordered list of videos for the lineup.
     """
     if target_seconds is None:
-        target_seconds = settings.DAILY_BUDGET_MINUTES * 60
+        target_seconds = settings.daily_budget_minutes * 60
 
     if today is None:
         today = date.today()
@@ -211,6 +252,20 @@ def upsert_video(db: Session, video_data: dict) -> Video:
         return video
 
 
+def _clean_backlog(db: Session) -> int:
+    """Remove unwatched backlog entries that fail current title/filter rules or are dismissed."""
+    entries = db.query(BacklogVideo).filter(BacklogVideo.is_watched == False).all()  # noqa: E712
+    removed = 0
+    for entry in entries:
+        if getattr(entry.video, "dismissed", False) or not _passes_title_filter(entry.video.title):
+            db.delete(entry)
+            removed += 1
+    if removed:
+        db.commit()
+        logger.info(f"Cleaned {removed} backlog entries that failed filters")
+    return removed
+
+
 def run_daily_curation(db: Session) -> dict:
     """
     Full pipeline: fetch -> score -> filter -> build lineup -> persist.
@@ -220,6 +275,7 @@ def run_daily_curation(db: Session) -> dict:
 
     today = date.today()
     logger.info(f"Starting daily curation for {today}")
+    _clean_backlog(db)
 
     # Fetch
     sub_videos_raw = get_subscription_videos(max_results=50)

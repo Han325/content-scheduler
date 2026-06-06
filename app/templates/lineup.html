@@ -1,117 +1,122 @@
 {% extends "base.html" %}
-
 {% block title %}Lineup — {{ today }}{% endblock %}
 
 {% block content %}
-<header class="site-header">
-  <span class="site-name">LINEUP</span>
-  <span class="site-date">{{ today }}</span>
-</header>
-<hr class="header-rule">
-
-<div class="status-bar">
-  <span class="status-dot {% if is_primetime %}dot-active{% else %}dot-inactive{% endif %}"></span>
-  <span class="status-label">
-    {% if is_primetime %}
-      On now &mdash; available until {{ primetime_end }}
-    {% else %}
-      Available {{ primetime_start }}–{{ primetime_end }}
+<header class="masthead">
+  <div class="ident">
+    <a href="/" class="ident-mark">Lineup</a>
+    <div class="bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+  </div>
+  <nav class="channel-nav">
+    <a href="/" class="nav-tab is-active">Tonight</a>
+    <a href="/ondemand" class="nav-tab">On Demand</a>
+    <a href="/history" class="nav-tab">History</a>
+    <button class="nav-refresh" id="refresh-btn" onclick="triggerRefresh()">&#8635; Refresh</button>
+  </nav>
+  <div class="broadcast-clock">
+    <span class="clock-time" id="clock-time">--:--:--</span>
+    <span class="clock-date" id="clock-date"></span>
+    {% if quota is defined %}
+    <div class="quota-mini">
+      <div class="quota-track"><div class="quota-fill" style="width: {{ [quota.used / quota.limit * 100, 100] | min | int }}%"></div></div>
+      <span class="quota-label">{{ quota.used }}&thinsp;/&thinsp;{{ quota.limit }} API units</span>
+    </div>
     {% endif %}
-  </span>
-</div>
-
-{% if slots %}
-<div class="budget-section">
-  <div class="budget-label">
-    <span>Tonight's lineup</span>
-    <span class="muted">{{ format_duration(total_seconds) }} total</span>
   </div>
-  <div class="budget-bar-track">
-    <div class="budget-bar-fill" style="width: {{ budget_used_pct }}%"></div>
-  </div>
-</div>
-{% endif %}
+</header>
+<div class="masthead-rule"></div>
 
 {% if all_watched %}
-<div class="done-message">
-  That's all for tonight.<br>See you tomorrow.
+{# ── Sign-off ── #}
+<div class="signoff">
+  <div class="bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+  <div class="signoff-title">That's all<br>for tonight</div>
+  <div class="signoff-sub">Back at {{ primetime_start }} tomorrow &middot; {{ schedule|length }} programs aired</div>
 </div>
-{% elif not slots %}
-<div class="empty-message">
-  <p>No lineup yet for today.</p>
-  {% if not is_primetime %}
-  <p class="muted small">The lineup is built at 6:00 PM. You can also trigger it manually:</p>
-  {% endif %}
-  <form method="post" action="/refresh" class="refresh-form">
-    <button type="submit" class="btn-refresh">Build today's lineup</button>
+
+{% elif not schedule %}
+{# ── No lineup yet ── #}
+<div class="notice">
+  <div class="notice-title">No program<br>scheduled yet</div>
+  <div class="notice-sub">Built daily at 18:00. Trigger it now:</div>
+  <form method="post" action="/refresh">
+    <button type="submit" class="btn-build">&#9654; Build tonight&rsquo;s lineup</button>
   </form>
 </div>
+
 {% else %}
-<ul class="video-list">
-  {% for slot in slots %}
-  <li class="video-row {% if slot.is_watched %}is-watched{% endif %}" data-youtube-id="{{ slot.video.youtube_id }}">
-    <div class="video-meta">
-      <span class="channel-name">{{ slot.video.channel_name }}</span>
-      <span class="video-title">{{ slot.video.title }}</span>
-      <div class="video-tags">
-        <span class="tag">{{ format_duration(slot.video.duration_seconds) }}</span>
-        {% if slot.video.category != "general" %}
-        <span class="tag tag-category">{{ slot.video.category }}</span>
-        {% endif %}
-      </div>
+{# ── Hero ── #}
+<div class="hero {% if is_primetime %}is-onair{% endif %}">
+  <div class="hero-status">
+    <span class="onair-dot"></span>
+    {% if is_primetime %}
+      On Air <span class="sep">/</span> Until {{ primetime_end }}
+    {% else %}
+      Pre-show <span class="sep">/</span> Doors at {{ primetime_start }}
+    {% endif %}
+  </div>
+  <h1 class="hero-title">Tonight<span class="em">.</span></h1>
+  <div class="hero-window">{{ primetime_start }} <b>&mdash;</b> {{ primetime_end }}</div>
+  <p class="hero-tagline">A curated ninety-minute watchlist, programmed from your subscriptions. It waits for you.</p>
+  <div class="meter">
+    <div class="meter-stats">
+      <span class="big">{{ schedule|length }}</span><span>Programs</span>
+      <span class="sep">/</span>
+      <span class="big">{{ format_duration(total_seconds) }}</span><span>Runtime</span>
     </div>
-    <div class="video-action">
+    <div class="meter-track">
+      <div class="meter-fill" style="width: {{ budget_used_pct }}%"></div>
+    </div>
+    <div class="meter-ticks">
+      <span>{{ primetime_start }}</span>
+      <span>{{ schedule_end }}</span>
+    </div>
+  </div>
+</div>
+
+{# ── Schedule rundown ── #}
+<ul class="rundown">
+  {% for entry in schedule %}
+  {% set slot = entry.slot %}
+  <li class="program {% if slot.is_watched %}is-watched{% endif %}"
+      data-start-min="{{ entry.start_min }}"
+      data-end-min="{{ entry.end_min }}"
+      data-youtube-id="{{ slot.video.youtube_id }}">
+    <div class="slot-time">
+      <span class="start">{{ entry.start }}</span>
+      <span class="end">{{ entry.end }}</span>
+    </div>
+    <div class="prog-meta">
+      <div class="prog-channel">
+        {{ slot.video.channel_name }}
+        <span class="dur">&middot; {{ format_duration(slot.video.duration_seconds) }}</span>
+      </div>
+      <div class="prog-title">{{ slot.video.title }}</div>
+      {% if slot.video.category != "general" %}
+      <div class="prog-tags"><span class="tag">{{ slot.video.category }}</span></div>
+      {% endif %}
+    </div>
+    <div class="prog-action">
       {% if slot.is_watched %}
-        <span class="watched-indicator" title="Watched">&#10003;</span>
+        <span class="done">&#10003; Watched</span>
       {% elif is_primetime %}
-        <button
-          class="play-btn"
-          onclick="playVideo('{{ slot.video.youtube_id }}')"
-          title="Watch on YouTube"
-        >&#9654;</button>
+        <button class="btn-play"
+                data-youtube-id="{{ slot.video.youtube_id }}"
+                onclick="playVideo('{{ slot.video.youtube_id }}')">
+          <span class="tri">&#9654;</span> Watch
+        </button>
+        <button class="btn-skip"
+                data-youtube-id="{{ slot.video.youtube_id }}"
+                onclick="skipVideo('{{ slot.video.youtube_id }}')">&#x2715;</button>
       {% else %}
-        <span class="locked-indicator" title="Available at {{ primetime_start }}">&#128274;</span>
+        <span class="lock">&#9711; {{ entry.start }}</span>
+        <button class="btn-skip"
+                data-youtube-id="{{ slot.video.youtube_id }}"
+                onclick="skipVideo('{{ slot.video.youtube_id }}')">&#x2715;</button>
       {% endif %}
     </div>
   </li>
   {% endfor %}
 </ul>
 {% endif %}
-
-<footer class="site-footer">
-  <a href="/ondemand">On Demand</a>
-  <span class="footer-sep">&middot;</span>
-  <a href="/history">History</a>
-  <span class="footer-sep">&middot;</span>
-  <a href="/api/status">Status</a>
-</footer>
-{% endblock %}
-
-{% block scripts %}
-<script>
-async function playVideo(youtubeId) {
-  // Mark as watched first
-  try {
-    await fetch(`/watch/${youtubeId}`, { method: 'POST' });
-  } catch (e) {
-    console.warn('Could not mark as watched:', e);
-  }
-  // Open YouTube
-  window.open(`https://www.youtube.com/watch?v=${youtubeId}`, '_blank');
-  // Update UI without full reload
-  const row = document.querySelector(`[data-youtube-id="${youtubeId}"]`);
-  if (row) {
-    row.classList.add('is-watched');
-    const action = row.querySelector('.video-action');
-    if (action) {
-      action.innerHTML = '<span class="watched-indicator" title="Watched">&#10003;</span>';
-    }
-  }
-  // Check if all done
-  const unwatched = document.querySelectorAll('.video-row:not(.is-watched)');
-  if (unwatched.length === 0) {
-    setTimeout(() => location.reload(), 500);
-  }
-}
-</script>
 {% endblock %}

@@ -18,6 +18,7 @@ class Video(Base):
     published_at = Column(DateTime, nullable=True)
     fetched_at = Column(DateTime, default=datetime.utcnow)
     score = Column(Float, default=0.0)
+    dismissed = Column(Boolean, default=False, server_default="0")
 
     lineup_slots = relationship("LineupSlot", back_populates="video")
     backlog_entries = relationship("BacklogVideo", back_populates="video")

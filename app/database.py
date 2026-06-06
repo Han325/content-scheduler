@@ -25,3 +25,11 @@ def init_db():
     # Import models to register them with Base before creating tables
     from app import models  # noqa: F401
     Base.metadata.create_all(bind=engine)
+    # Safe migration: add dismissed column if it doesn't exist yet
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        try:
+            conn.execute(text("ALTER TABLE videos ADD COLUMN dismissed BOOLEAN NOT NULL DEFAULT 0"))
+            conn.commit()
+        except Exception:
+            pass  # column already exists

@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db, init_db
 from app.models import Video, LineupSlot, BacklogVideo
 from app.scheduler import start_scheduler, stop_scheduler
+from app.youtube import quota_status
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -85,32 +86,45 @@ def _get_todays_lineup(db: Session) -> list[LineupSlot]:
 @app.get("/", response_class=HTMLResponse)
 def lineup_page(request: Request, db: Session = Depends(get_db)):
     slots = _get_todays_lineup(db)
-    total_budget = settings.DAILY_BUDGET_MINUTES * 60
-    watched_seconds = sum(
-        s.video.duration_seconds for s in slots if s.is_watched
-    )
-    remaining_seconds = sum(
-        s.video.duration_seconds for s in slots if not s.is_watched
-    )
+    total_budget = settings.daily_budget_minutes * 60
+    watched_seconds = sum(s.video.duration_seconds for s in slots if s.is_watched)
     total_seconds = sum(s.video.duration_seconds for s in slots)
     budget_used_pct = min(100, int(watched_seconds / total_budget * 100)) if total_budget else 0
-    all_watched = slots and all(s.is_watched for s in slots)
+    all_watched = bool(slots) and all(s.is_watched for s in slots)
+
+    # Compute per-slot airtimes from primetime start + cumulative durations
+    cursor = settings.primetime_start_hour * 60 + settings.primetime_start_minute
+    schedule = []
+    for slot in slots:
+        dur_min = slot.video.duration_seconds // 60
+        start_min, end_min = cursor, cursor + dur_min
+        cursor = end_min
+        schedule.append({
+            "slot": slot,
+            "start": f"{start_min // 60 % 24:02d}:{start_min % 60:02d}",
+            "end":   f"{end_min   // 60 % 24:02d}:{end_min   % 60:02d}",
+            "start_min": start_min,
+            "end_min":   end_min,
+        })
+
+    end_min = settings.primetime_start_hour * 60 + settings.primetime_start_minute + total_seconds // 60
+    schedule_end = f"{end_min // 60 % 24:02d}:{end_min % 60:02d}"
 
     return templates.TemplateResponse(
         request=request,
         name="lineup.html",
         context={
+            "schedule": schedule,
             "slots": slots,
             "is_primetime": _is_primetime(),
             "primetime_start": settings.PRIMETIME_START,
             "primetime_end": settings.PRIMETIME_END,
-            "total_budget_minutes": settings.DAILY_BUDGET_MINUTES,
-            "watched_seconds": watched_seconds,
-            "remaining_seconds": remaining_seconds,
             "total_seconds": total_seconds,
             "budget_used_pct": budget_used_pct,
             "all_watched": all_watched,
+            "schedule_end": schedule_end,
             "today": date.today().strftime("%A, %B %d").replace(" 0", " "),
+            "quota": quota_status(),
         },
     )
 
@@ -132,6 +146,7 @@ def ondemand_page(request: Request, db: Session = Depends(get_db)):
             "backlog": backlog,
             "total_seconds": total_seconds,
             "is_primetime": _is_primetime(),
+            "quota": quota_status(),
         },
     )
 
@@ -189,6 +204,7 @@ def history_page(request: Request, db: Session = Depends(get_db)):
         name="history.html",
         context={
             "grouped": grouped,
+            "quota": quota_status(),
         },
     )
 
@@ -234,6 +250,74 @@ def mark_watched(youtube_id: str, db: Session = Depends(get_db)):
     return {"ok": True, "marked": marked, "youtube_id": youtube_id}
 
 
+@app.post("/skip/{youtube_id}")
+def skip_video(youtube_id: str, db: Session = Depends(get_db)):
+    """Remove an unwatched slot from today's lineup and pull in the top backlog pick."""
+    video = db.query(Video).filter(Video.youtube_id == youtube_id).first()
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    today = date.today()
+    slot = (
+        db.query(LineupSlot)
+        .filter(
+            LineupSlot.date == today,
+            LineupSlot.video_id == video.id,
+            LineupSlot.is_watched == False,  # noqa: E712
+        )
+        .first()
+    )
+    if not slot:
+        raise HTTPException(status_code=404, detail="Slot not found or already watched")
+
+    # Pull top backlog pick by score (desc), then by added_at (desc) as tiebreaker
+    from sqlalchemy import desc as sa_desc
+    replacement = (
+        db.query(BacklogVideo)
+        .join(Video, BacklogVideo.video_id == Video.id)
+        .filter(BacklogVideo.is_watched == False)  # noqa: E712
+        .order_by(sa_desc(Video.score), sa_desc(BacklogVideo.added_at))
+        .first()
+    )
+
+    # Permanently dismiss the video so it never resurfaces
+    video.dismissed = True
+    db.delete(slot)
+
+    # Also remove from backlog if it's sitting there
+    existing_backlog = db.query(BacklogVideo).filter(
+        BacklogVideo.video_id == video.id,
+        BacklogVideo.is_watched == False,  # noqa: E712
+    ).first()
+    if existing_backlog:
+        db.delete(existing_backlog)
+
+    if replacement:
+        repl_video = replacement.video
+        max_pos = db.query(LineupSlot).filter(LineupSlot.date == today).count()
+        new_slot = LineupSlot(
+            date=today,
+            video_id=repl_video.id,
+            position=max_pos,
+        )
+        db.add(new_slot)
+        db.delete(replacement)
+        db.commit()
+        return {
+            "ok": True,
+            "replaced": True,
+            "new_video": {
+                "youtube_id": repl_video.youtube_id,
+                "title": repl_video.title,
+                "channel_name": repl_video.channel_name,
+                "duration_seconds": repl_video.duration_seconds,
+            },
+        }
+
+    db.commit()
+    return {"ok": True, "replaced": False}
+
+
 @app.post("/refresh")
 def manual_refresh(db: Session = Depends(get_db)):
     """Manually trigger curation pipeline. For dev/testing."""
@@ -256,11 +340,19 @@ def manual_refresh(db: Session = Depends(get_db)):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
+@app.get("/api/quota")
+def api_quota():
+    """Live YouTube API quota usage."""
+    q = quota_status()
+    pct = round(q["used"] / q["limit"] * 100, 1) if q["limit"] else 0
+    return {"used": q["used"], "limit": q["limit"], "pct": pct, "remaining": q["limit"] - q["used"]}
+
+
 @app.get("/api/status")
 def api_status(db: Session = Depends(get_db)):
     """JSON status endpoint."""
     slots = _get_todays_lineup(db)
-    total_budget = settings.DAILY_BUDGET_MINUTES * 60
+    total_budget = settings.daily_budget_minutes * 60
     watched_seconds = sum(s.video.duration_seconds for s in slots if s.is_watched)
     remaining_seconds = sum(s.video.duration_seconds for s in slots if not s.is_watched)
 

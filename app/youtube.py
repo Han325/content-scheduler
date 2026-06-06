@@ -24,8 +24,27 @@ logger = logging.getLogger(__name__)
 TOKEN_FILE = settings.TOKEN_FILE
 SCOPES = ["https://www.googleapis.com/auth/youtube.readonly"]
 
-# Holds the active OAuth flow between /auth and /auth/callback
 _pending_flow: Optional["Flow"] = None
+
+# --- Quota tracking (resets at midnight, 10 000 units/day default) ---
+_quota: dict = {"date": None, "units": 0}
+QUOTA_DAILY_LIMIT = 10_000
+
+
+def _track(units: int) -> None:
+    from datetime import date
+    today = str(date.today())
+    if _quota["date"] != today:
+        _quota["date"] = today
+        _quota["units"] = 0
+    _quota["units"] += units
+
+
+def quota_status() -> dict:
+    from datetime import date
+    today = str(date.today())
+    used = _quota["units"] if _quota["date"] == today else 0
+    return {"used": used, "limit": QUOTA_DAILY_LIMIT}
 
 TOPIC_QUERIES = [
     "geopolitics explained 2025",
@@ -46,6 +65,9 @@ CHANNEL_WHITELIST: list[str] = [
     # "UCxxxxxx",  # Good Work
     # "UCxxxxxx",  # Morning Brew
 ]
+
+# ISO 3166-1 alpha-2 country codes to exclude entirely
+CHANNEL_COUNTRY_BLOCKLIST: set[str] = {"IN"}
 
 
 def _client_config() -> dict:
@@ -124,6 +146,28 @@ def _parse_duration(iso_duration: str) -> int:
     return hours * 3600 + minutes * 60 + seconds
 
 
+def _blocked_channel_ids(youtube, channel_ids: list[str]) -> set[str]:
+    """Return the subset of channel_ids whose country is in CHANNEL_COUNTRY_BLOCKLIST."""
+    if not channel_ids or not CHANNEL_COUNTRY_BLOCKLIST:
+        return set()
+    blocked: set[str] = set()
+    for i in range(0, len(channel_ids), 50):
+        batch = channel_ids[i : i + 50]
+        try:
+            resp = youtube.channels().list(
+                part="snippet",
+                id=",".join(batch),
+            ).execute()
+            _track(1)
+            for item in resp.get("items", []):
+                country = item.get("snippet", {}).get("country", "")
+                if country in CHANNEL_COUNTRY_BLOCKLIST:
+                    blocked.add(item["id"])
+        except HttpError as e:
+            logger.warning(f"Error fetching channel countries: {e}")
+    return blocked
+
+
 def _video_ids_to_details(youtube, video_ids: list[str]) -> list[dict]:
     """Fetch video details (duration, etc.) for a list of video IDs."""
     if not video_ids:
@@ -138,6 +182,7 @@ def _video_ids_to_details(youtube, video_ids: list[str]) -> list[dict]:
                 part="snippet,contentDetails,statistics",
                 id=",".join(batch),
             ).execute()
+            _track(1)
             results.extend(response.get("items", []))
         except HttpError as e:
             logger.error(f"Error fetching video details: {e}")
@@ -183,6 +228,7 @@ def get_subscription_videos(max_results: int = 50) -> list[dict]:
             mine=True,
             maxResults=50,
         ).execute()
+        _track(1)
 
         channel_ids = [
             item["snippet"]["resourceId"]["channelId"]
@@ -195,14 +241,19 @@ def get_subscription_videos(max_results: int = 50) -> list[dict]:
                 channel_ids.append(cid)
 
         # For each channel, get the uploads playlist
-        for channel_id in channel_ids[:20]:  # Limit to avoid quota explosion
+        for channel_id in channel_ids[:40]:  # Limit to avoid quota explosion
             try:
                 chan_response = youtube.channels().list(
-                    part="contentDetails",
+                    part="contentDetails,snippet",
                     id=channel_id,
                 ).execute()
+                _track(1)
                 items = chan_response.get("items", [])
                 if not items:
+                    continue
+                country = items[0].get("snippet", {}).get("country", "")
+                if country in CHANNEL_COUNTRY_BLOCKLIST:
+                    logger.debug(f"Skipping channel {channel_id} (country: {country})")
                     continue
 
                 uploads_playlist = (
@@ -217,8 +268,9 @@ def get_subscription_videos(max_results: int = 50) -> list[dict]:
                 pl_response = youtube.playlistItems().list(
                     part="contentDetails",
                     playlistId=uploads_playlist,
-                    maxResults=5,
+                    maxResults=8,
                 ).execute()
+                _track(1)
 
                 for pl_item in pl_response.get("items", []):
                     vid_id = pl_item.get("contentDetails", {}).get("videoId")
@@ -233,7 +285,7 @@ def get_subscription_videos(max_results: int = 50) -> list[dict]:
         logger.error(f"Error fetching subscriptions: {e}")
         return []
 
-    video_ids = list(dict.fromkeys(video_ids))[:max_results]
+    video_ids = list(dict.fromkeys(video_ids))[:max(max_results, 150)]
     return _video_ids_to_details(youtube, video_ids)
 
 
@@ -259,7 +311,9 @@ def search_topic_videos(queries: Optional[list[str]] = None, max_results_per_que
                 maxResults=max_results_per_query,
                 order="date",
                 videoDuration="medium",  # 4–20 minutes
+                relevanceLanguage="en",
             ).execute()
+            _track(100)
 
             for item in response.get("items", []):
                 vid_id = item.get("id", {}).get("videoId")
@@ -272,6 +326,14 @@ def search_topic_videos(queries: Optional[list[str]] = None, max_results_per_que
 
     all_video_ids = list(dict.fromkeys(all_video_ids))
     videos = _video_ids_to_details(youtube, all_video_ids)
+
+    # Filter out channels from blocked countries
+    unique_channel_ids = list({v["channel_id"] for v in videos if v.get("channel_id")})
+    blocked = _blocked_channel_ids(youtube, unique_channel_ids)
+    if blocked:
+        before = len(videos)
+        videos = [v for v in videos if v.get("channel_id") not in blocked]
+        logger.info(f"Country filter removed {before - len(videos)} search videos (blocked channels: {len(blocked)})")
 
     # Tag trailer videos
     trailer_keywords = ["trailer", "official trailer", "teaser"]

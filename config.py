@@ -11,7 +11,15 @@ class Settings:
     TOKEN_FILE: str = os.getenv("TOKEN_FILE", "token.json")
     PRIMETIME_START: str = os.getenv("PRIMETIME_START", "19:00")
     PRIMETIME_END: str = os.getenv("PRIMETIME_END", "22:00")
-    DAILY_BUDGET_MINUTES: int = int(os.getenv("DAILY_BUDGET_MINUTES", "90"))
+    @property
+    def daily_budget_minutes(self) -> int:
+        env_val = os.getenv("DAILY_BUDGET_MINUTES")
+        if env_val:
+            return int(env_val)
+        # Default: fill the full primetime window
+        end = self.primetime_end_hour * 60 + self.primetime_end_minute
+        start = self.primetime_start_hour * 60 + self.primetime_start_minute
+        return end - start
 
     @property
     def has_youtube_credentials(self) -> bool:
