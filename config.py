@@ -17,10 +17,10 @@ class Settings:
     DISABLE_SCHEDULER: bool = os.getenv("DISABLE_SCHEDULER", "false").lower() == "true"
     # Secret sent by Cloud Scheduler in X-Cron-Secret header to protect /refresh
     CRON_SECRET: str = os.getenv("CRON_SECRET", "")
-    # Password for HTTP Basic Auth — set this to lock the app to just you
-    APP_PASSWORD: str = os.getenv("APP_PASSWORD", "")
     # Secret for signing session cookies — must be set in production
     SESSION_SECRET: str = os.getenv("SESSION_SECRET", "dev-secret-change-in-production")
+    # Comma-separated list of allowed Google email addresses. Empty = allow any Google account.
+    ALLOWED_EMAILS: str = os.getenv("ALLOWED_EMAILS", "")
     @property
     def daily_budget_minutes(self) -> int:
         env_val = os.getenv("DAILY_BUDGET_MINUTES")

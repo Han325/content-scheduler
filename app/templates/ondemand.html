@@ -11,7 +11,7 @@
     <a href="/" class="nav-tab">Tonight</a>
     <a href="/ondemand" class="nav-tab is-active">On Demand</a>
     <a href="/history" class="nav-tab">History</a>
-    <button class="nav-refresh" id="refresh-btn" onclick="triggerRefresh()">&#8635; Refresh</button>
+    <button class="nav-refresh" id="refresh-btn" onclick="triggerRefresh()">&#8635; <span class="nav-refresh-label">Refresh</span></button>
   </nav>
   <div class="broadcast-clock">
     <span class="clock-time" id="clock-time">--:--:--</span>
@@ -20,6 +20,12 @@
     <div class="quota-mini">
       <div class="quota-track"><div class="quota-fill" style="width: {{ [quota.used / quota.limit * 100, 100] | min | int }}%"></div></div>
       <span class="quota-label">{{ quota.used }}&thinsp;/&thinsp;{{ quota.limit }} API units</span>
+    </div>
+    {% endif %}
+    {% if current_user is defined %}
+    <div class="user-meta">
+      <span class="user-name">{{ current_user.name.split()[0] if current_user.name else current_user.email }}</span>
+      <a href="/logout" class="sign-out-link">Sign out</a>
     </div>
     {% endif %}
   </div>

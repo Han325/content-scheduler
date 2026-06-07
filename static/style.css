@@ -734,6 +734,7 @@ header.masthead   { view-transition-name: site-header; }
   .prog-action { grid-column: 2; justify-content: flex-start; flex-wrap: wrap; gap: 0.4rem; }
   .rundown.no-rail .program { grid-template-columns: 2rem 1fr; }
   .nav-refresh { font-size: 0.72rem; padding: 0.22rem 0.5rem; letter-spacing: 0.08em; }
+  .nav-refresh-label { display: none; }
   .nav-tab { font-size: 0.82rem; }
 }
 
@@ -1005,6 +1006,39 @@ header.masthead   { view-transition-name: site-header; }
   text-transform: uppercase;
   color: var(--dim);
 }
+
+/* === User meta (first name + sign-out link) ====================== */
+.user-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  margin-top: 0.3rem;
+}
+.user-name {
+  font-family: var(--font-mono);
+  font-size: 0.70rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--faint);
+  max-width: clamp(5ch, 12vw, 16ch);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sign-out-link {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--faint);
+  border: 1px solid var(--line-soft);
+  padding: 0.18rem 0.45rem;
+  border-radius: 2px;
+  flex-shrink: 0;
+  transition: color 0.18s, border-color 0.18s;
+}
+.sign-out-link:hover { color: var(--muted); border-color: var(--dim); }
 
 /* === Login page ================================================== */
 .login-stage {

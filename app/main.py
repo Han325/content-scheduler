@@ -7,7 +7,6 @@ import hashlib
 import hmac
 import json as _json
 import logging
-import secrets
 from datetime import date, datetime, time
 from typing import Optional
 
@@ -15,7 +14,7 @@ import json
 import re as _re
 
 from fastapi import FastAPI, Depends, Request, HTTPException, UploadFile, File
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
@@ -97,38 +96,6 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
         raise
     except Exception:
         raise NotAuthenticated()
-
-
-# ---------------------------------------------------------------------------
-# Basic Auth middleware (URL-level protection)
-# ---------------------------------------------------------------------------
-
-_UNPROTECTED = {"/auth/callback", "/refresh", "/login", "/auth", "/static"}
-
-
-@app.middleware("http")
-async def basic_auth_middleware(request: Request, call_next):
-    if not settings.APP_PASSWORD:
-        return await call_next(request)
-    path = request.url.path
-    if path in _UNPROTECTED or path.startswith("/static"):
-        return await call_next(request)
-
-    auth = request.headers.get("Authorization", "")
-    if auth.startswith("Basic "):
-        try:
-            decoded = base64.b64decode(auth[6:]).decode("utf-8")
-            _, password = decoded.split(":", 1)
-            if secrets.compare_digest(password, settings.APP_PASSWORD):
-                return await call_next(request)
-        except Exception:
-            pass
-
-    return Response(
-        content="Unauthorized",
-        status_code=401,
-        headers={"WWW-Authenticate": 'Basic realm="Lineup"'},
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -261,6 +228,12 @@ def auth_callback(request: Request, code: str, state: Optional[str] = None, db: 
     email = userinfo.get("email", "")
     name = userinfo.get("name", "")
 
+    # Check invite list (empty = open to any Google account)
+    if settings.ALLOWED_EMAILS:
+        allowed = {e.strip().lower() for e in settings.ALLOWED_EMAILS.split(",") if e.strip()}
+        if email.lower() not in allowed:
+            raise HTTPException(status_code=403, detail="This account is not on the invite list.")
+
     # Find or create user
     user = db.query(User).filter(User.google_sub == google_sub).first()
     is_new_user = user is None
@@ -293,6 +266,13 @@ def auth_callback(request: Request, code: str, state: Optional[str] = None, db: 
         samesite="lax",
         secure=is_secure,
     )
+    return response
+
+
+@app.get("/logout")
+def logout():
+    response = RedirectResponse("/login", status_code=303)
+    response.delete_cookie("lineup_session")
     return response
 
 
