@@ -2,7 +2,9 @@
 FastAPI application — routes, templates, OAuth flow.
 """
 
+import base64
 import logging
+import secrets
 from datetime import date, datetime, time
 from typing import Optional
 
@@ -10,12 +12,12 @@ import json
 import re as _re
 
 from fastapi import FastAPI, Depends, Request, HTTPException, UploadFile, File
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
-from app.database import get_db, init_db
+from app.database import get_db, init_db, load_from_gcs, sync_to_gcs
 from app.models import Video, LineupSlot, BacklogVideo, ExternalWatch, RejectedVideo
 from app.scheduler import start_scheduler, stop_scheduler
 from app.youtube import quota_status
@@ -42,13 +44,45 @@ templates.env.globals["format_duration"] = _format_duration
 
 
 # ---------------------------------------------------------------------------
+# Basic Auth middleware
+# ---------------------------------------------------------------------------
+
+_UNPROTECTED = {"/auth/callback", "/refresh"}
+
+@app.middleware("http")
+async def basic_auth_middleware(request: Request, call_next):
+    if not settings.APP_PASSWORD or request.url.path in _UNPROTECTED:
+        return await call_next(request)
+
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Basic "):
+        try:
+            decoded = base64.b64decode(auth[6:]).decode("utf-8")
+            _, password = decoded.split(":", 1)
+            if secrets.compare_digest(password, settings.APP_PASSWORD):
+                return await call_next(request)
+        except Exception:
+            pass
+
+    return Response(
+        content="Unauthorized",
+        status_code=401,
+        headers={"WWW-Authenticate": 'Basic realm="Lineup"'},
+    )
+
+
+# ---------------------------------------------------------------------------
 # Startup / shutdown
 # ---------------------------------------------------------------------------
 
 @app.on_event("startup")
 def on_startup():
+    load_from_gcs()
     init_db()
-    start_scheduler()
+    if not settings.DISABLE_SCHEDULER:
+        start_scheduler()
+    else:
+        logger.info("APScheduler disabled — curation triggered by Cloud Scheduler via POST /refresh")
     if not settings.has_youtube_credentials:
         logger.warning(
             "No YouTube credentials found in environment. "
@@ -58,7 +92,9 @@ def on_startup():
 
 @app.on_event("shutdown")
 def on_shutdown():
-    stop_scheduler()
+    if not settings.DISABLE_SCHEDULER:
+        stop_scheduler()
+    sync_to_gcs()
 
 
 # ---------------------------------------------------------------------------
@@ -252,6 +288,7 @@ def mark_watched(youtube_id: str, db: Session = Depends(get_db)):
         marked = True
 
     db.commit()
+    sync_to_gcs()
     return {"ok": True, "marked": marked, "youtube_id": youtube_id}
 
 
@@ -308,6 +345,7 @@ def skip_video(youtube_id: str, db: Session = Depends(get_db)):
         db.add(new_slot)
         db.delete(replacement)
         db.commit()
+        sync_to_gcs()
         return {
             "ok": True,
             "replaced": True,
@@ -320,6 +358,7 @@ def skip_video(youtube_id: str, db: Session = Depends(get_db)):
         }
 
     db.commit()
+    sync_to_gcs()
     return {"ok": True, "replaced": False}
 
 
@@ -353,12 +392,16 @@ def reject_video(youtube_id: str, db: Session = Depends(get_db)):
         db.delete(backlog_entry)
 
     db.commit()
+    sync_to_gcs()
     return {"ok": True, "youtube_id": youtube_id}
 
 
 @app.post("/refresh")
-def manual_refresh(db: Session = Depends(get_db)):
-    """Manually trigger curation pipeline. For dev/testing."""
+def manual_refresh(request: Request, db: Session = Depends(get_db)):
+    """Trigger curation pipeline. Called by Cloud Scheduler in production."""
+    if settings.CRON_SECRET:
+        if request.headers.get("X-Cron-Secret", "") != settings.CRON_SECRET:
+            raise HTTPException(status_code=401, detail="Unauthorized")
     if not settings.has_youtube_credentials:
         return JSONResponse(
             status_code=400,
@@ -372,9 +415,25 @@ def manual_refresh(db: Session = Depends(get_db)):
     from app.curator import run_daily_curation
     try:
         result = run_daily_curation(db)
+        sync_to_gcs()
         return result
     except Exception as e:
         logger.error(f"Manual refresh failed: {e}", exc_info=True)
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/build")
+def ui_build(db: Session = Depends(get_db)):
+    """Trigger curation from the browser UI. Protected by Basic Auth middleware."""
+    if not settings.has_youtube_credentials:
+        return JSONResponse(status_code=400, content={"error": "No YouTube credentials configured."})
+    from app.curator import run_daily_curation
+    try:
+        result = run_daily_curation(db)
+        sync_to_gcs()
+        return result
+    except Exception as e:
+        logger.error(f"UI build failed: {e}", exc_info=True)
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -407,6 +466,7 @@ async def import_watch_history(file: UploadFile = File(...), db: Session = Depen
             skipped += 1
 
     db.commit()
+    sync_to_gcs()
     return {"imported": imported, "skipped_duplicates": skipped, "total_entries": len(data)}
 
 
@@ -440,7 +500,7 @@ def api_status(db: Session = Depends(get_db)):
         "budget_seconds": total_budget,
         "backlog_count": backlog_count,
         "has_credentials": settings.has_youtube_credentials,
-        "has_token": __import__("os").path.exists("token.json"),
+        "has_token": __import__("os").path.exists(settings.TOKEN_FILE),
     }
 
 
@@ -460,7 +520,7 @@ def auth_start():
         )
 
     from app.youtube import get_auth_flow
-    flow = get_auth_flow()
+    flow = get_auth_flow(redirect_uri=settings.OAUTH_REDIRECT_URI)
     auth_url, state = flow.authorization_url(
         access_type="offline",
         include_granted_scopes="true",

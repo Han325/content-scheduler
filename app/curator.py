@@ -7,6 +7,7 @@ All rules are explicit — no ML.
 import re
 import logging
 import unicodedata
+from collections import Counter
 from datetime import datetime, timezone, date
 from typing import Optional
 
@@ -55,6 +56,22 @@ TITLE_BLACKLIST_PATTERNS = [
     re.compile(r"\b(operation\s+sindoor|pahalgam|imran\s+khan|adiala|tollywood|lollywood)\b", re.IGNORECASE),
     re.compile(r"\b(ram\s+charan|buchi\s+babu|prabhas|allu\s+arjun|vijay\s+devarakonda)\b", re.IGNORECASE),
     re.compile(r"\b(zee\s+news|ndtv|aaj\s+tak|india\s+tv|times\s+now|sathiyam|sun\s+tv)\b", re.IGNORECASE),
+    # Sports
+    re.compile(r"\b(premier\s+league|champions\s+league|europa\s+league|fifa|uefa|bundesliga|la\s+liga|serie\s+a)\b", re.IGNORECASE),
+    re.compile(r"\b(match\s+highlights?|match\s+recap|goal\s+of\s+the|hat\s+trick|transfer\s+(news|window|deadline|rumou?rs?))\b", re.IGNORECASE),
+    re.compile(r"\b(nba|nhl|mlb|nfl|ncaa|formula\s*1\b|f1\s+race|grand\s+prix|cricket\s+(match|highlights?|series)|rugby)\b", re.IGNORECASE),
+    re.compile(r"\b(fantasy\s+(football|sport)|draft\s+picks?|injury\s+report|trade\s+deadline)\b", re.IGNORECASE),
+    # Gaming
+    re.compile(r"\blet'?s\s+play\b", re.IGNORECASE),
+    re.compile(r"\b(gameplay|walkthrough|speedrun|playthrough|game\s+review|esports?)\b", re.IGNORECASE),
+    re.compile(r"\b(twitch\s+(clip|stream|highlights?)|streamer\b)\b", re.IGNORECASE),
+    # Celebrity gossip
+    re.compile(r"\b(celebrity\s+(drama|beef|feud|gossip)|kardashian|beef\s+between)\b", re.IGNORECASE),
+    re.compile(r"\b(drama\s+update|exposed|gets?\s+cancelled|cancel\s+culture|spill\s+the\s+tea|drama\s+explained)\b", re.IGNORECASE),
+    # US domestic politics (clickbait/partisan — not geopolitics analysis)
+    re.compile(r"\b(maga|make\s+america\s+great\s+again)\b", re.IGNORECASE),
+    re.compile(r"\b(trump\s+(rally|campaign|speech|rant)|biden\s+(rally|gaffe|speech))\b", re.IGNORECASE),
+    re.compile(r"\b(republican\s+party|democrat(ic)?\s+party|gop\s+(debate|primary|candidate))\b", re.IGNORECASE),
     # Offensive language
     re.compile(r"\bretards?\b", re.IGNORECASE),
     re.compile(r"\b(nigger|faggot|tranny)\b", re.IGNORECASE),
@@ -144,7 +161,44 @@ def _days_since_published(published_at: Optional[datetime]) -> Optional[float]:
     return delta.total_seconds() / 86400
 
 
-def score_video(video: Video) -> float:
+def _compute_channel_reputations(db: Session) -> dict:
+    """
+    Derive a per-channel reputation score from watch and reject history.
+
+    Watches are a weak positive signal; explicit rejects are weighted 1.5x negative.
+    Channels with fewer than 2 total signals stay neutral (0.0) to avoid
+    a single action permanently blackholing a channel.
+
+    Returns dict of channel_id -> float in the range [-0.3, +0.3].
+    """
+    watched_channel_ids = [
+        slot.video.channel_id
+        for slot in db.query(LineupSlot).filter(LineupSlot.is_watched == True).all()  # noqa: E712
+    ]
+    watched_channel_ids += [
+        entry.video.channel_id
+        for entry in db.query(BacklogVideo).filter(BacklogVideo.is_watched == True).all()  # noqa: E712
+    ]
+    rejected_channel_ids = [rv.channel_id for rv in db.query(RejectedVideo).all()]
+
+    watch_counts = Counter(watched_channel_ids)
+    reject_counts = Counter(rejected_channel_ids)
+    all_channels = set(watch_counts) | set(reject_counts)
+
+    reputations: dict = {}
+    for cid in all_channels:
+        w = watch_counts.get(cid, 0)
+        r = reject_counts.get(cid, 0)
+        if w + r < 2:
+            reputations[cid] = 0.0
+            continue
+        raw = (w - r * 1.5) / (w + r)
+        reputations[cid] = round(max(-1.0, min(1.0, raw)) * 0.3, 4)
+
+    return reputations
+
+
+def score_video(video: Video, channel_reputation: float = 0.0) -> float:
     """
     Score a video from 0.0 to 1.0+ (channel whitelist can push above 1.0).
     Higher = better.
@@ -157,9 +211,11 @@ def score_video(video: Video) -> float:
     days_old = _days_since_published(video.published_at)
     if days_old is not None:
         if days_old <= 7:
-            s += 0.3
+            s += 0.30
         elif days_old <= 30:
             s += 0.15
+        elif days_old <= 90:
+            s += 0.05
 
     # Channel whitelist bonus
     if video.channel_id in CHANNEL_WHITELIST:
@@ -174,10 +230,8 @@ def score_video(video: Video) -> float:
     if video.category == "trailer":
         s += 0.1
 
-    # Topic match — already sourced from topic queries so slight boost
-    # (subscription videos get +0 here; topic-searched get +0.1)
-    # We use the category field as a proxy: "general" from search, keep neutral.
-    # A cleaner approach would tag at fetch time — left as future improvement.
+    # Channel reputation from past watch/reject behaviour (±0.3)
+    s += channel_reputation
 
     return round(s, 4)
 
@@ -250,6 +304,7 @@ def build_lineup(
     videos: list[Video],
     target_seconds: int = None,
     today: Optional[date] = None,
+    channel_reputations: Optional[dict] = None,
 ) -> list[Video]:
     """
     Greedily pick highest-scored videos until the daily budget is met.
@@ -261,9 +316,12 @@ def build_lineup(
     if today is None:
         today = date.today()
 
+    if channel_reputations is None:
+        channel_reputations = {}
+
     # Score each video
     for video in videos:
-        video.score = score_video(video)
+        video.score = score_video(video, channel_reputations.get(video.channel_id, 0.0))
 
     # Sort by score descending
     sorted_videos = sorted(videos, key=lambda v: v.score, reverse=True)
@@ -379,12 +437,44 @@ def run_daily_curation(db: Session) -> dict:
     eligible = filter_videos(unique_videos, db, today)
     logger.info(f"{len(eligible)} videos passed filters")
 
+    # Channel reputation from past behaviour
+    channel_reputations = _compute_channel_reputations(db)
+    logger.info(f"Reputation scores computed for {len(channel_reputations)} channels")
+
     # Build lineup
-    lineup_videos = build_lineup(eligible, today=today)
+    lineup_videos = build_lineup(eligible, today=today, channel_reputations=channel_reputations)
+
+    # Fallback: if lineup is too short, promote top backlog videos to fill the gap
+    target_seconds = settings.daily_budget_minutes * 60
+    lineup_total = sum(v.duration_seconds for v in lineup_videos)
+    if lineup_total < target_seconds * 0.80:
+        logger.info(
+            f"Lineup only {lineup_total // 60}m — promoting backlog to fill gap"
+        )
+        lineup_ids = {v.youtube_id for v in lineup_videos}
+        backlog_candidates = (
+            db.query(BacklogVideo)
+            .filter(BacklogVideo.is_watched == False)  # noqa: E712
+            .join(Video)
+            .order_by(Video.score.desc())
+            .all()
+        )
+        for entry in backlog_candidates:
+            if lineup_total >= target_seconds:
+                break
+            v = entry.video
+            if v.youtube_id in lineup_ids:
+                continue
+            lineup_videos.append(v)
+            lineup_ids.add(v.youtube_id)
+            lineup_total += v.duration_seconds
+            db.delete(entry)
+        db.commit()
+        logger.info(f"Lineup after fallback: {lineup_total // 60}m")
 
     # Save lineup slots
     for i, video in enumerate(lineup_videos):
-        video.score = score_video(video)
+        video.score = score_video(video, channel_reputations.get(video.channel_id, 0.0))
         db.add(video)
 
         slot = LineupSlot(

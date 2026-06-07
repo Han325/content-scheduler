@@ -107,6 +107,20 @@ async function fetchQuota() {
   } catch (e) { /* silently ignore — bar keeps server-rendered value */ }
 }
 
+/* --- reject a watched lineup video (flags channel as garbage) --- */
+async function rejectFromLineup(youtubeId, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = "…"; }
+  try {
+    await fetch(`/reject/${youtubeId}`, { method: "POST" });
+    if (btn) {
+      btn.textContent = "✕ Flagged";
+      btn.style.opacity = "0.4";
+    }
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = "✕"; }
+  }
+}
+
 /* --- trigger curation refresh --- */
 async function triggerRefresh() {
   const btn = document.getElementById("refresh-btn");
@@ -117,7 +131,7 @@ async function triggerRefresh() {
   btn.textContent = "Building…";
 
   try {
-    const res = await fetch("/refresh", { method: "POST" });
+    const res = await fetch("/api/build", { method: "POST" });
     const data = await res.json();
     if (res.ok) {
       btn.classList.remove("is-refreshing");

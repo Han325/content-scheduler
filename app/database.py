@@ -1,11 +1,25 @@
+import logging
+import os
+import shutil
+
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from config import settings
 
+logger = logging.getLogger(__name__)
+
+# GCS FUSE and SQLite are incompatible — SQLite's journal does random writes
+# while GCS FUSE requires sequential writes, causing cascading 429s.
+# Fix: run SQLite on local /tmp (fast), sync to GCS only after bulk writes.
+_GCS_DB_PATH = os.getenv("GCS_DB_PATH", "")
+_LOCAL_DB_PATH = "/tmp/lineup.db"
+
+_db_url = f"sqlite:////{_LOCAL_DB_PATH}" if _GCS_DB_PATH else settings.DATABASE_URL
+
 engine = create_engine(
-    settings.DATABASE_URL,
-    connect_args={"check_same_thread": False} if "sqlite" in settings.DATABASE_URL else {},
+    _db_url,
+    connect_args={"check_same_thread": False} if "sqlite" in _db_url else {},
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -21,11 +35,28 @@ def get_db():
         db.close()
 
 
+def load_from_gcs():
+    """Copy DB from GCS mount to /tmp at startup. No-op if GCS_DB_PATH is unset."""
+    if not _GCS_DB_PATH:
+        return
+    if os.path.exists(_GCS_DB_PATH) and os.path.getsize(_GCS_DB_PATH) > 0:
+        shutil.copy2(_GCS_DB_PATH, _LOCAL_DB_PATH)
+        logger.info("Loaded DB from GCS (%d bytes)", os.path.getsize(_LOCAL_DB_PATH))
+    else:
+        logger.info("No existing GCS DB — starting fresh at %s", _LOCAL_DB_PATH)
+
+
+def sync_to_gcs():
+    """Copy DB from /tmp back to GCS mount after writes. No-op if GCS_DB_PATH is unset."""
+    if not _GCS_DB_PATH or not os.path.exists(_LOCAL_DB_PATH):
+        return
+    shutil.copy2(_LOCAL_DB_PATH, _GCS_DB_PATH)
+    logger.info("Synced DB to GCS (%d bytes)", os.path.getsize(_LOCAL_DB_PATH))
+
+
 def init_db():
-    # Import models to register them with Base before creating tables
     from app import models  # noqa: F401
     Base.metadata.create_all(bind=engine)
-    # Safe migration: add dismissed column if it doesn't exist yet
     from sqlalchemy import text
     with engine.connect() as conn:
         try:

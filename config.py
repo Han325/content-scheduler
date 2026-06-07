@@ -11,6 +11,14 @@ class Settings:
     TOKEN_FILE: str = os.getenv("TOKEN_FILE", "token.json")
     PRIMETIME_START: str = os.getenv("PRIMETIME_START", "19:00")
     PRIMETIME_END: str = os.getenv("PRIMETIME_END", "22:00")
+    # Set to the Cloud Run service URL/auth/callback when deployed
+    OAUTH_REDIRECT_URI: str = os.getenv("OAUTH_REDIRECT_URI", "http://localhost:8000/auth/callback")
+    # Set to true on Cloud Run — Cloud Scheduler replaces APScheduler
+    DISABLE_SCHEDULER: bool = os.getenv("DISABLE_SCHEDULER", "false").lower() == "true"
+    # Secret sent by Cloud Scheduler in X-Cron-Secret header to protect /refresh
+    CRON_SECRET: str = os.getenv("CRON_SECRET", "")
+    # Password for HTTP Basic Auth — set this to lock the app to just you
+    APP_PASSWORD: str = os.getenv("APP_PASSWORD", "")
     @property
     def daily_budget_minutes(self) -> int:
         env_val = os.getenv("DAILY_BUDGET_MINUTES")

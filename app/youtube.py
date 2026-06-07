@@ -72,18 +72,46 @@ def quota_status() -> dict:
 
 _load_quota()
 
-TOPIC_QUERIES = [
-    "geopolitics explained 2025",
-    "world news analysis",
-    "morning brew news",
-    "tldr news",
-    "official movie trailer 2025",
-    "official tv show trailer 2025",
-    "philosophy explained",
-    "social commentary",
-    "tech explained",
-    "science documentary short",
-]
+TOPIC_QUERIES: dict = {
+    "News": [
+        "geopolitics explained 2025",
+        "world news analysis 2025",
+        "foreign policy explained",
+        "tldr news",
+        "international relations documentary",
+    ],
+    "Tech & Science": [
+        "technology explained 2025",
+        "artificial intelligence explained",
+        "science documentary 2025",
+        "future technology analysis",
+    ],
+    "Film & TV": [
+        "official movie trailer 2025",
+        "official tv show trailer 2025",
+    ],
+    "Philosophy": [
+        "philosophy explained",
+        "social commentary essay",
+        "cultural criticism video essay",
+        "ideas explained",
+    ],
+}
+
+# YouTube Data API categoryId → display label
+_YT_CATEGORY_DISPLAY = {
+    "1":  "Film & TV",
+    "10": "Music",
+    "17": "Sports",
+    "20": "Gaming",
+    "22": "Culture",
+    "23": "Entertainment",
+    "24": "Entertainment",
+    "25": "News",
+    "27": "Education",
+    "28": "Tech & Science",
+    "29": "Culture",
+}
 
 CHANNEL_WHITELIST: list[str] = [
     # Add channel IDs here as strings:
@@ -198,7 +226,7 @@ def _blocked_channel_ids(youtube, channel_ids: list[str]) -> set[str]:
                 country = snippet.get("country", "")
                 name = snippet.get("title", "")
                 sub_raw = item.get("statistics", {}).get("subscriberCount")
-                too_small = sub_raw is not None and int(sub_raw) < MIN_SUBSCRIBER_COUNT
+                too_small = sub_raw is None or int(sub_raw) < MIN_SUBSCRIBER_COUNT
                 if (country in CHANNEL_COUNTRY_BLOCKLIST
                         or name in CHANNEL_NAME_BLOCKLIST
                         or too_small):
@@ -237,6 +265,7 @@ def _video_ids_to_details(youtube, video_ids: list[str]) -> list[dict]:
         except (ValueError, AttributeError):
             published_at = None
 
+        yt_cat_id = snippet.get("categoryId", "")
         videos.append({
             "youtube_id": item["id"],
             "title": snippet.get("title", ""),
@@ -245,7 +274,7 @@ def _video_ids_to_details(youtube, video_ids: list[str]) -> list[dict]:
             "duration_seconds": _parse_duration(content.get("duration", "PT0S")),
             "thumbnail_url": (snippet.get("thumbnails", {}).get("medium", {}) or {}).get("url", ""),
             "published_at": published_at,
-            "category": "general",
+            "category": _YT_CATEGORY_DISPLAY.get(yt_cat_id, "general"),
         })
 
     return videos
@@ -317,7 +346,7 @@ def get_subscription_videos(max_results: int = 50) -> list[dict]:
                 pl_response = youtube.playlistItems().list(
                     part="contentDetails",
                     playlistId=uploads_playlist,
-                    maxResults=8,
+                    maxResults=20,
                 ).execute()
                 _track(1)
 
@@ -345,46 +374,54 @@ def search_topic_videos(queries: Optional[list[str]] = None, max_results_per_que
         logger.warning("No YouTube credentials available. Skipping topic search.")
         return []
 
+    query_map = queries if isinstance(queries, dict) else {"general": queries}
     if queries is None:
-        queries = TOPIC_QUERIES
+        query_map = TOPIC_QUERIES
 
     youtube = _build_youtube(creds)
-    all_video_ids = []
+    # Track which video ID belongs to which category group
+    video_id_category: dict = {}
 
-    for query in queries:
-        try:
-            response = youtube.search().list(
-                part="id",
-                q=query,
-                type="video",
-                maxResults=max_results_per_query,
-                order="date",
-                videoDuration="medium",  # 4–20 minutes
-                relevanceLanguage="en",
-            ).execute()
-            _track(100)
+    for category_label, query_list in query_map.items():
+        for query in query_list:
+            try:
+                response = youtube.search().list(
+                    part="id",
+                    q=query,
+                    type="video",
+                    maxResults=max_results_per_query,
+                    order="date",
+                    videoDuration="medium",  # 4–20 minutes
+                    relevanceLanguage="en",
+                ).execute()
+                _track(100)
 
-            for item in response.get("items", []):
-                vid_id = item.get("id", {}).get("videoId")
-                if vid_id:
-                    all_video_ids.append(vid_id)
+                for item in response.get("items", []):
+                    vid_id = item.get("id", {}).get("videoId")
+                    if vid_id and vid_id not in video_id_category:
+                        video_id_category[vid_id] = category_label
 
-        except HttpError as e:
-            logger.warning(f"Error searching for '{query}': {e}")
-            continue
+            except HttpError as e:
+                logger.warning(f"Error searching for '{query}': {e}")
+                continue
 
-    all_video_ids = list(dict.fromkeys(all_video_ids))
+    all_video_ids = list(video_id_category.keys())
     videos = _video_ids_to_details(youtube, all_video_ids)
 
-    # Filter out channels from blocked countries
+    # Override category with the query group label (more precise than YouTube's categoryId)
+    for v in videos:
+        if v["youtube_id"] in video_id_category:
+            v["category"] = video_id_category[v["youtube_id"]]
+
+    # Filter out blocked channels
     unique_channel_ids = list({v["channel_id"] for v in videos if v.get("channel_id")})
     blocked = _blocked_channel_ids(youtube, unique_channel_ids)
     if blocked:
         before = len(videos)
         videos = [v for v in videos if v.get("channel_id") not in blocked]
-        logger.info(f"Country filter removed {before - len(videos)} search videos (blocked channels: {len(blocked)})")
+        logger.info(f"Channel filter removed {before - len(videos)} search videos")
 
-    # Tag trailer videos
+    # Trailer title override — must stay "trailer" for duration filter to work
     trailer_keywords = ["trailer", "official trailer", "teaser"]
     for v in videos:
         title_lower = v["title"].lower()

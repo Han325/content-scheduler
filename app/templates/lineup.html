@@ -96,17 +96,19 @@
     <div class="prog-action">
       {% if slot.is_watched %}
         <span class="done">&#10003; Watched</span>
-      {% elif is_primetime %}
+        <button class="btn-reject"
+                data-youtube-id="{{ slot.video.youtube_id }}"
+                onclick="rejectFromLineup('{{ slot.video.youtube_id }}', this)"
+                title="Flag as garbage — won't appear again">&#x2715;</button>
+      {% else %}
+        {% if not is_primetime %}
+        <span class="lock">&#9711; {{ entry.start }}</span>
+        {% endif %}
         <button class="btn-play"
                 data-youtube-id="{{ slot.video.youtube_id }}"
                 onclick="playVideo('{{ slot.video.youtube_id }}')">
           <span class="tri">&#9654;</span> Watch
         </button>
-        <button class="btn-skip"
-                data-youtube-id="{{ slot.video.youtube_id }}"
-                onclick="skipVideo('{{ slot.video.youtube_id }}')">&#x2715;</button>
-      {% else %}
-        <span class="lock">&#9711; {{ entry.start }}</span>
         <button class="btn-skip"
                 data-youtube-id="{{ slot.video.youtube_id }}"
                 onclick="skipVideo('{{ slot.video.youtube_id }}')">&#x2715;</button>
