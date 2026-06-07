@@ -109,6 +109,12 @@
                 onclick="playVideo('{{ slot.video.youtube_id }}')">
           <span class="tri">&#9654;</span> Watch
         </button>
+        <button class="btn-seen"
+                data-youtube-id="{{ slot.video.youtube_id }}"
+                onclick="markSeen('{{ slot.video.youtube_id }}', this)"
+                title="Already watched this — mark done without opening YouTube">
+          &#10003; Seen
+        </button>
         <button class="btn-skip"
                 data-youtube-id="{{ slot.video.youtube_id }}"
                 onclick="skipVideo('{{ slot.video.youtube_id }}')">&#x2715;</button>

@@ -61,6 +61,12 @@
               onclick="playBacklog(this, '{{ entry.video.youtube_id }}')">
         <span class="tri">&#9654;</span> Watch
       </button>
+      <button class="btn-seen"
+              data-youtube-id="{{ entry.video.youtube_id }}"
+              onclick="seenBacklog(this, '{{ entry.video.youtube_id }}')"
+              title="Already watched this — mark done without opening YouTube">
+        &#10003; Seen
+      </button>
       <button class="btn-reject"
               data-youtube-id="{{ entry.video.youtube_id }}"
               onclick="rejectBacklog(this, '{{ entry.video.youtube_id }}')"
@@ -115,6 +121,30 @@ async function playBacklog(btn, youtubeId) {
     const action = row.querySelector(".prog-action");
     if (action) action.innerHTML = `<span class="done">&#10003; Watched</span>`;
     setTimeout(() => row.remove(), 1200);
+  }
+}
+
+async function seenBacklog(btn, youtubeId) {
+  btn.disabled = true;
+  btn.textContent = "…";
+  try {
+    const res = await fetch(`/watch/${youtubeId}`, { method: "POST" });
+    if (res.ok) {
+      const row = btn.closest(".program");
+      if (row) {
+        row.style.transition = "opacity 0.4s";
+        row.style.opacity = "0.25";
+        const action = row.querySelector(".prog-action");
+        if (action) action.innerHTML = `<span class="done">&#10003; Seen</span>`;
+        setTimeout(() => row.remove(), 1200);
+      }
+    } else {
+      btn.disabled = false;
+      btn.textContent = "✓ Seen";
+    }
+  } catch(e) {
+    btn.disabled = false;
+    btn.textContent = "✓ Seen";
   }
 }
 

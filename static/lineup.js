@@ -107,6 +107,28 @@ async function fetchQuota() {
   } catch (e) { /* silently ignore — bar keeps server-rendered value */ }
 }
 
+/* --- mark as already-seen without opening YouTube --- */
+async function markSeen(youtubeId, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = "…"; }
+  try {
+    await fetch(`/watch/${youtubeId}`, { method: "POST" });
+    const row = btn?.closest(".program");
+    if (row) {
+      row.classList.add("is-watched");
+      row.classList.remove("is-now");
+      row.querySelector(".now-flag")?.remove();
+      const action = row.querySelector(".prog-action");
+      if (action) action.innerHTML = `<span class="done">&#10003; Seen</span>
+        <button class="btn-reject" data-youtube-id="${youtubeId}"
+                onclick="rejectFromLineup('${youtubeId}', this)" title="Flag as garbage">&#x2715;</button>`;
+    }
+    const unwatched = document.querySelectorAll(".program:not(.is-watched)[data-start-min]");
+    if (unwatched.length === 0) setTimeout(() => location.reload(), 700);
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = "✓ Seen"; }
+  }
+}
+
 /* --- reject a watched lineup video (flags channel as garbage) --- */
 async function rejectFromLineup(youtubeId, btn) {
   if (btn) { btn.disabled = true; btn.textContent = "…"; }
