@@ -6,12 +6,13 @@ All rules are explicit — no ML.
 
 import re
 import logging
+import unicodedata
 from datetime import datetime, timezone, date
 from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.models import Video, LineupSlot, BacklogVideo
+from app.models import Video, LineupSlot, BacklogVideo, ExternalWatch, RejectedVideo
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -34,10 +35,16 @@ TITLE_BLACKLIST_PATTERNS = [
     re.compile(r"\b(hindi|telugu|tamil|kannada|malayalam|punjabi|bengali|marathi|gujarati|urdu|odia|hinglish)\b", re.IGNORECASE),
     re.compile(r"\b(mein|hai|kaise|kya|aur|nahi|bahut|accha|theek|bilkul|lekin)\b"),
     # Exam / academic junk
+    re.compile(r"\bexams?\b", re.IGNORECASE),
     re.compile(r"\b(exam\s*paper|past\s*paper|model\s*paper|question\s*paper|solved\s*paper|answer\s*key)\b", re.IGNORECASE),
     re.compile(r"\b(mcqs?|ssc|upsc|jee|neet|ias|ips|gate\s*exam|board\s*exam)\b", re.IGNORECASE),
     re.compile(r"\b(solutions?\s*(paper|set|class)|class\s*\d+\s*(maths?|science|physics|chemistry|biology))\b", re.IGNORECASE),
     re.compile(r"\b(lecture\s*\d+|chapter\s*\d+|full\s*course|crash\s*course|complete\s*course)\b", re.IGNORECASE),
+    # Recruitment / HR content
+    re.compile(r"\brecruitment\b", re.IGNORECASE),
+    re.compile(r"\b(hiring\s+process|job\s+interview|resume\s+tips|cv\s+tips|how\s+to\s+get\s+hired)\b", re.IGNORECASE),
+    # Geographic filters
+    re.compile(r"\bindia\b", re.IGNORECASE),
     # News broadcast re-uploads and live TV rips
     re.compile(r"\bfull\s+(episode|show|broadcast)\b", re.IGNORECASE),
     re.compile(r"\b(morning|evening|tonight|today'?s?|latest|breaking)\s+headlines?\b", re.IGNORECASE),
@@ -55,20 +62,15 @@ TITLE_BLACKLIST_PATTERNS = [
 
 MAX_PER_CHANNEL = 2  # max videos from the same channel in one lineup
 
-# Emoji Unicode ranges
-_EMOJI_RANGES = [
-    (0x1F300, 0x1FAFF),  # Misc symbols, emoticons, transport, supplemental
-    (0x2600, 0x27BF),    # Misc symbols and dingbats
-]
 
-
-def _emoji_count(text: str) -> int:
-    count = 0
+def _has_emoji(text: str) -> bool:
+    # Unicode category 'So' (Symbol, Other) covers all emoji and emoji-like symbols,
+    # including those outside the BMP (⭐ U+2B50, ▶ U+25B6, ™ U+2122, etc.)
+    # that the previous hard-coded range check missed.
     for c in text:
-        cp = ord(c)
-        if any(lo <= cp <= hi for lo, hi in _EMOJI_RANGES):
-            count += 1
-    return count
+        if unicodedata.category(c) == 'So':
+            return True
+    return False
 
 CAPS_THRESHOLD = 0.40  # >40% uppercase letters = filter out
 
@@ -116,14 +118,18 @@ def _passes_duration_filter(duration_seconds: int, category: str) -> bool:
 
 
 def _passes_title_filter(title: str) -> bool:
+    if '|' in title:
+        return False
+    if '#' in title:
+        return False
+    if _has_emoji(title):
+        return False
     for pattern in TITLE_BLACKLIST_PATTERNS:
         if pattern.search(title):
             return False
     if _is_excessive_caps(title):
         return False
     if any(_is_non_latin(c) for c in title):
-        return False
-    if _emoji_count(title) >= 2:
         return False
     return True
 
@@ -200,6 +206,14 @@ def filter_videos(
     for entry in watched_backlog:
         watched_ids.add(entry.video.youtube_id)
 
+    # Imported YouTube watch history (Google Takeout)
+    for ew in db.query(ExternalWatch).all():
+        watched_ids.add(ew.youtube_id)
+
+    # Explicitly rejected by the user
+    for rv in db.query(RejectedVideo).all():
+        watched_ids.add(rv.youtube_id)
+
     # Already in today's lineup
     todays_slots = db.query(LineupSlot).filter(LineupSlot.date == today).all()
     todays_ids: set[str] = {slot.video.youtube_id for slot in todays_slots}
@@ -210,11 +224,16 @@ def filter_videos(
 
     excluded = watched_ids | todays_ids | backlog_ids
 
+    from app.youtube import CHANNEL_NAME_BLOCKLIST
+
     filtered = []
     for video in videos:
         if video.youtube_id in excluded:
             continue
         if getattr(video, "dismissed", False):
+            continue
+        if video.channel_name in CHANNEL_NAME_BLOCKLIST:
+            logger.debug(f"Filtered (channel blocklist): {video.channel_name}")
             continue
         if not _passes_duration_filter(video.duration_seconds, video.category):
             logger.debug(f"Filtered (duration): {video.title} ({video.duration_seconds}s)")
@@ -289,11 +308,17 @@ def upsert_video(db: Session, video_data: dict) -> Video:
 
 
 def _clean_backlog(db: Session) -> int:
-    """Remove unwatched backlog entries that fail current title/filter rules or are dismissed."""
+    """Remove unwatched backlog entries that fail current title/channel rules, are dismissed, or were rejected."""
+    from app.youtube import CHANNEL_NAME_BLOCKLIST
+    rejected_ids = {rv.youtube_id for rv in db.query(RejectedVideo).all()}
     entries = db.query(BacklogVideo).filter(BacklogVideo.is_watched == False).all()  # noqa: E712
     removed = 0
     for entry in entries:
-        if getattr(entry.video, "dismissed", False) or not _passes_title_filter(entry.video.title):
+        v = entry.video
+        if (getattr(v, "dismissed", False)
+                or not _passes_title_filter(v.title)
+                or v.channel_name in CHANNEL_NAME_BLOCKLIST
+                or v.youtube_id in rejected_ids):
             db.delete(entry)
             removed += 1
     if removed:

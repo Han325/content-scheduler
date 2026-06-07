@@ -8,6 +8,8 @@ On first run, visit /auth to start the OAuth consent flow.
 import os
 import json
 import logging
+
+_QUOTA_FILE = "quota_state.json"
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -31,6 +33,26 @@ _quota: dict = {"date": None, "units": 0}
 QUOTA_DAILY_LIMIT = 10_000
 
 
+def _load_quota() -> None:
+    """Load persisted quota state from disk so restarts don't reset the counter."""
+    if os.path.exists(_QUOTA_FILE):
+        try:
+            with open(_QUOTA_FILE) as f:
+                state = json.load(f)
+            _quota["date"] = state.get("date")
+            _quota["units"] = state.get("units", 0)
+        except Exception:
+            pass
+
+
+def _save_quota() -> None:
+    try:
+        with open(_QUOTA_FILE, "w") as f:
+            json.dump({"date": _quota["date"], "units": _quota["units"]}, f)
+    except Exception:
+        pass
+
+
 def _track(units: int) -> None:
     from datetime import date
     today = str(date.today())
@@ -38,6 +60,7 @@ def _track(units: int) -> None:
         _quota["date"] = today
         _quota["units"] = 0
     _quota["units"] += units
+    _save_quota()
 
 
 def quota_status() -> dict:
@@ -45,6 +68,9 @@ def quota_status() -> dict:
     today = str(date.today())
     used = _quota["units"] if _quota["date"] == today else 0
     return {"used": used, "limit": QUOTA_DAILY_LIMIT}
+
+
+_load_quota()
 
 TOPIC_QUERIES = [
     "geopolitics explained 2025",
@@ -66,8 +92,16 @@ CHANNEL_WHITELIST: list[str] = [
     # "UCxxxxxx",  # Morning Brew
 ]
 
+MIN_SUBSCRIBER_COUNT = 500
+
 # ISO 3166-1 alpha-2 country codes to exclude entirely
 CHANNEL_COUNTRY_BLOCKLIST: set[str] = {"IN", "PK", "ID"}
+
+# Channel names to block regardless of content
+CHANNEL_NAME_BLOCKLIST: set[str] = {
+    "Fox News",
+    "Fox Business",
+}
 
 
 def _client_config() -> dict:
@@ -147,24 +181,30 @@ def _parse_duration(iso_duration: str) -> int:
 
 
 def _blocked_channel_ids(youtube, channel_ids: list[str]) -> set[str]:
-    """Return the subset of channel_ids whose country is in CHANNEL_COUNTRY_BLOCKLIST."""
-    if not channel_ids or not CHANNEL_COUNTRY_BLOCKLIST:
+    """Return channel IDs blocked by country, subscriber count, or name blocklist."""
+    if not channel_ids:
         return set()
     blocked: set[str] = set()
     for i in range(0, len(channel_ids), 50):
         batch = channel_ids[i : i + 50]
         try:
             resp = youtube.channels().list(
-                part="snippet",
+                part="snippet,statistics",
                 id=",".join(batch),
             ).execute()
             _track(1)
             for item in resp.get("items", []):
-                country = item.get("snippet", {}).get("country", "")
-                if country in CHANNEL_COUNTRY_BLOCKLIST:
+                snippet = item.get("snippet", {})
+                country = snippet.get("country", "")
+                name = snippet.get("title", "")
+                sub_raw = item.get("statistics", {}).get("subscriberCount")
+                too_small = sub_raw is not None and int(sub_raw) < MIN_SUBSCRIBER_COUNT
+                if (country in CHANNEL_COUNTRY_BLOCKLIST
+                        or name in CHANNEL_NAME_BLOCKLIST
+                        or too_small):
                     blocked.add(item["id"])
         except HttpError as e:
-            logger.warning(f"Error fetching channel countries: {e}")
+            logger.warning(f"Error fetching channel details: {e}")
     return blocked
 
 
@@ -244,16 +284,25 @@ def get_subscription_videos(max_results: int = 50) -> list[dict]:
         for channel_id in channel_ids[:40]:  # Limit to avoid quota explosion
             try:
                 chan_response = youtube.channels().list(
-                    part="contentDetails,snippet",
+                    part="contentDetails,snippet,statistics",
                     id=channel_id,
                 ).execute()
                 _track(1)
                 items = chan_response.get("items", [])
                 if not items:
                     continue
-                country = items[0].get("snippet", {}).get("country", "")
+                snippet = items[0].get("snippet", {})
+                country = snippet.get("country", "")
+                name = snippet.get("title", "")
+                sub_raw = items[0].get("statistics", {}).get("subscriberCount")
                 if country in CHANNEL_COUNTRY_BLOCKLIST:
                     logger.debug(f"Skipping channel {channel_id} (country: {country})")
+                    continue
+                if name in CHANNEL_NAME_BLOCKLIST:
+                    logger.debug(f"Skipping channel {channel_id} (name blocklist: {name})")
+                    continue
+                if sub_raw is not None and int(sub_raw) < MIN_SUBSCRIBER_COUNT:
+                    logger.debug(f"Skipping channel {channel_id} (subscribers: {sub_raw})")
                     continue
 
                 uploads_playlist = (

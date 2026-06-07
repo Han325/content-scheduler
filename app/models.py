@@ -47,3 +47,32 @@ class BacklogVideo(Base):
     watched_at = Column(DateTime, nullable=True)
 
     video = relationship("Video", back_populates="backlog_entries")
+
+
+class ExternalWatch(Base):
+    """YouTube video IDs imported from Google Takeout watch history."""
+    __tablename__ = "external_watches"
+
+    id = Column(Integer, primary_key=True, index=True)
+    youtube_id = Column(String, unique=True, index=True, nullable=False)
+    imported_at = Column(DateTime, default=datetime.utcnow)
+
+
+class RejectedVideo(Base):
+    """Videos explicitly rejected from the on-demand list.
+    Denormalized fields are stored for pattern analysis without requiring JOINs."""
+    __tablename__ = "rejected_videos"
+
+    id = Column(Integer, primary_key=True, index=True)
+    video_id = Column(Integer, ForeignKey("videos.id"), nullable=False)
+    rejected_at = Column(DateTime, default=datetime.utcnow)
+
+    # Denormalized snapshot at rejection time — survives video record cleanup
+    youtube_id = Column(String, index=True, nullable=False)
+    title = Column(String, nullable=False)
+    channel_name = Column(String, nullable=False)
+    channel_id = Column(String, nullable=False)
+    category = Column(String, default="general")
+    duration_seconds = Column(Integer, nullable=False)
+
+    video = relationship("Video")

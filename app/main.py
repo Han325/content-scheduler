@@ -6,14 +6,17 @@ import logging
 from datetime import date, datetime, time
 from typing import Optional
 
-from fastapi import FastAPI, Depends, Request, HTTPException
+import json
+import re as _re
+
+from fastapi import FastAPI, Depends, Request, HTTPException, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from app.database import get_db, init_db
-from app.models import Video, LineupSlot, BacklogVideo
+from app.models import Video, LineupSlot, BacklogVideo, ExternalWatch, RejectedVideo
 from app.scheduler import start_scheduler, stop_scheduler
 from app.youtube import quota_status
 from config import settings
@@ -138,6 +141,7 @@ def ondemand_page(request: Request, db: Session = Depends(get_db)):
         .all()
     )
     total_seconds = sum(e.video.duration_seconds for e in backlog)
+    imported_count = db.query(ExternalWatch).count()
 
     return templates.TemplateResponse(
         request=request,
@@ -147,6 +151,7 @@ def ondemand_page(request: Request, db: Session = Depends(get_db)):
             "total_seconds": total_seconds,
             "is_primetime": _is_primetime(),
             "quota": quota_status(),
+            "imported_count": imported_count,
         },
     )
 
@@ -318,6 +323,39 @@ def skip_video(youtube_id: str, db: Session = Depends(get_db)):
     return {"ok": True, "replaced": False}
 
 
+@app.post("/reject/{youtube_id}")
+def reject_video(youtube_id: str, db: Session = Depends(get_db)):
+    """Reject a backlog video. Stores a record for pattern analysis and removes it from the backlog."""
+    video = db.query(Video).filter(Video.youtube_id == youtube_id).first()
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    # Idempotent — don't create a duplicate rejection record
+    existing = db.query(RejectedVideo).filter(RejectedVideo.youtube_id == youtube_id).first()
+    if not existing:
+        db.add(RejectedVideo(
+            video_id=video.id,
+            youtube_id=video.youtube_id,
+            title=video.title,
+            channel_name=video.channel_name,
+            channel_id=video.channel_id,
+            category=video.category,
+            duration_seconds=video.duration_seconds,
+        ))
+
+    # Remove from backlog
+    backlog_entry = (
+        db.query(BacklogVideo)
+        .filter(BacklogVideo.video_id == video.id, BacklogVideo.is_watched == False)  # noqa: E712
+        .first()
+    )
+    if backlog_entry:
+        db.delete(backlog_entry)
+
+    db.commit()
+    return {"ok": True, "youtube_id": youtube_id}
+
+
 @app.post("/refresh")
 def manual_refresh(db: Session = Depends(get_db)):
     """Manually trigger curation pipeline. For dev/testing."""
@@ -338,6 +376,38 @@ def manual_refresh(db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"Manual refresh failed: {e}", exc_info=True)
         return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/import-history")
+async def import_watch_history(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """
+    Import YouTube watch history from a Google Takeout watch-history.json file.
+    Videos whose IDs are imported will be permanently excluded from future lineups.
+    """
+    try:
+        raw = await file.read()
+        data = json.loads(raw)
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"error": f"Could not parse file: {e}"})
+
+    _vid_re = _re.compile(r"[?&]v=([A-Za-z0-9_-]{11})")
+    imported = 0
+    skipped = 0
+    for entry in data:
+        url = entry.get("titleUrl", "")
+        match = _vid_re.search(url)
+        if not match:
+            continue
+        vid_id = match.group(1)
+        exists = db.query(ExternalWatch).filter(ExternalWatch.youtube_id == vid_id).first()
+        if not exists:
+            db.add(ExternalWatch(youtube_id=vid_id))
+            imported += 1
+        else:
+            skipped += 1
+
+    db.commit()
+    return {"imported": imported, "skipped_duplicates": skipped, "total_entries": len(data)}
 
 
 @app.get("/api/quota")

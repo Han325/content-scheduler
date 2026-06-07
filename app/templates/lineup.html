@@ -39,9 +39,7 @@
 <div class="notice">
   <div class="notice-title">No program<br>scheduled yet</div>
   <div class="notice-sub">Built daily at 18:00. Trigger it now:</div>
-  <form method="post" action="/refresh">
-    <button type="submit" class="btn-build">&#9654; Build tonight&rsquo;s lineup</button>
-  </form>
+  <button type="button" class="btn-build" id="refresh-btn" onclick="triggerRefresh()">&#9654; Build tonight&rsquo;s lineup</button>
 </div>
 
 {% else %}
@@ -57,7 +55,6 @@
   </div>
   <h1 class="hero-title">Tonight<span class="em">.</span></h1>
   <div class="hero-window">{{ primetime_start }} <b>&mdash;</b> {{ primetime_end }}</div>
-  <p class="hero-tagline">A curated ninety-minute watchlist, programmed from your subscriptions. It waits for you.</p>
   <div class="meter">
     <div class="meter-stats">
       <span class="big">{{ schedule|length }}</span><span>Programs</span>

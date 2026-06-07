@@ -112,23 +112,43 @@ async function triggerRefresh() {
   const btn = document.getElementById("refresh-btn");
   if (!btn || btn.disabled) return;
   btn.disabled = true;
+  btn.classList.add("is-refreshing");
+  btn.classList.remove("refresh-done");
   btn.textContent = "Building…";
 
   try {
     const res = await fetch("/refresh", { method: "POST" });
     const data = await res.json();
     if (res.ok) {
+      btn.classList.remove("is-refreshing");
+      btn.classList.add("refresh-done");
       btn.textContent = `✓ ${data.lineup_count ?? "?"} videos`;
-      await fetchQuota();           // update quota bar immediately after curation
-      setTimeout(() => location.reload(), 800);
+      btn.disabled = false;
+      await fetchQuota();
+      sessionStorage.setItem("lineup-refreshed", JSON.stringify({
+        count: data.lineup_count ?? "?",
+        minutes: data.lineup_minutes ?? "?"
+      }));
+      setTimeout(() => location.reload(), 1000);
     } else {
+      btn.classList.remove("is-refreshing");
       btn.textContent = "Error";
       btn.disabled = false;
     }
   } catch (e) {
+    btn.classList.remove("is-refreshing");
     btn.textContent = "Error";
     btn.disabled = false;
   }
+}
+
+/* --- post-reload refresh toast --- */
+function showRefreshToast(count, minutes) {
+  const toast = document.createElement("div");
+  toast.className = "refresh-toast";
+  toast.textContent = `Lineup rebuilt — ${count} videos · ${minutes}m`;
+  document.body.prepend(toast);
+  setTimeout(() => toast.remove(), 3200);
 }
 
 /* --- boot --- */
@@ -147,4 +167,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
   fetchQuota();
   setInterval(fetchQuota, 60_000);
+
+  const refreshed = sessionStorage.getItem("lineup-refreshed");
+  if (refreshed) {
+    sessionStorage.removeItem("lineup-refreshed");
+    try {
+      const { count, minutes } = JSON.parse(refreshed);
+      showRefreshToast(count, minutes);
+    } catch (_) {}
+  }
 });

@@ -28,8 +28,7 @@
 
 <div class="section-head">
   <div class="section-kicker">Backlog &middot; Anytime</div>
-  <h1 class="section-title">On Demand</h1>
-  <p class="section-sub">Quality picks that didn&rsquo;t fit tonight&rsquo;s ninety minutes. No schedule, no window — watch whenever.</p>
+  <h1 class="section-title">On Demand<span class="em">.</span></h1>
   {% if backlog %}
   <div class="section-meta">
     {{ backlog|length }} video{{ 's' if backlog|length != 1 }}
@@ -62,6 +61,12 @@
               onclick="playBacklog(this, '{{ entry.video.youtube_id }}')">
         <span class="tri">&#9654;</span> Watch
       </button>
+      <button class="btn-reject"
+              data-youtube-id="{{ entry.video.youtube_id }}"
+              onclick="rejectBacklog(this, '{{ entry.video.youtube_id }}')"
+              title="Not for me — remove and record for tuning">
+        Not for me
+      </button>
     </div>
   </li>
   {% endfor %}
@@ -72,6 +77,30 @@
   <div class="notice-sub">Videos that don&rsquo;t make tonight&rsquo;s lineup will appear here.</div>
 </div>
 {% endif %}
+
+{# ── Watch history import ── #}
+<details class="import-panel">
+  <summary class="import-summary">
+    <span class="import-icon">&#8679;</span> Import YouTube watch history
+  </summary>
+  <div class="import-body">
+    <p class="import-desc">
+      Upload a <code>watch-history.json</code> from
+      <a href="https://myaccount.google.com/data-and-privacy" target="_blank" rel="noopener">Google Takeout</a>
+      to permanently exclude videos you&rsquo;ve already watched before using Lineup.
+    </p>
+    <div class="import-form-row">
+      <label class="btn-file-pick" for="history-file">Choose file</label>
+      <input type="file" id="history-file" accept=".json">
+      <span class="import-filename" id="import-filename">No file chosen</span>
+      <button class="btn-import" id="import-btn" disabled onclick="submitHistory()">Upload</button>
+    </div>
+    <div class="import-status" id="import-status"></div>
+    {% if imported_count %}
+    <p class="import-hint">{{ imported_count }} video IDs already imported.</p>
+    {% endif %}
+  </div>
+</details>
 {% endblock %}
 
 {% block scripts %}
@@ -86,6 +115,76 @@ async function playBacklog(btn, youtubeId) {
     const action = row.querySelector(".prog-action");
     if (action) action.innerHTML = `<span class="done">&#10003; Watched</span>`;
     setTimeout(() => row.remove(), 1200);
+  }
+}
+
+async function rejectBacklog(btn, youtubeId) {
+  btn.disabled = true;
+  btn.textContent = "…";
+  try {
+    const res = await fetch(`/reject/${youtubeId}`, { method: "POST" });
+    if (res.ok) {
+      const row = btn.closest(".program");
+      if (row) {
+        row.style.transition = "opacity 0.35s, transform 0.35s";
+        row.style.opacity = "0";
+        row.style.transform = "translateX(12px)";
+        setTimeout(() => row.remove(), 380);
+      }
+    } else {
+      btn.disabled = false;
+      btn.textContent = "Not for me";
+    }
+  } catch(e) {
+    btn.disabled = false;
+    btn.textContent = "Not for me";
+  }
+}
+
+/* --- watch history import --- */
+const fileInput = document.getElementById("history-file");
+const importBtn = document.getElementById("import-btn");
+const filenameEl = document.getElementById("import-filename");
+
+if (fileInput) {
+  fileInput.addEventListener("change", () => {
+    const f = fileInput.files[0];
+    if (f) {
+      filenameEl.textContent = f.name;
+      importBtn.disabled = false;
+    } else {
+      filenameEl.textContent = "No file chosen";
+      importBtn.disabled = true;
+    }
+  });
+}
+
+async function submitHistory() {
+  const f = fileInput?.files[0];
+  if (!f) return;
+  importBtn.disabled = true;
+  importBtn.textContent = "Uploading…";
+  const status = document.getElementById("import-status");
+  const fd = new FormData();
+  fd.append("file", f);
+  try {
+    const res = await fetch("/import-history", { method: "POST", body: fd });
+    const data = await res.json();
+    if (res.ok) {
+      status.className = "import-status is-ok";
+      status.textContent = `Done — ${data.imported} new IDs imported, ${data.skipped_duplicates} already known.`;
+      importBtn.textContent = "Upload";
+    } else {
+      status.className = "import-status is-err";
+      status.textContent = data.error ?? "Upload failed.";
+      importBtn.disabled = false;
+      importBtn.textContent = "Upload";
+    }
+  } catch(e) {
+    status.className = "import-status is-err";
+    status.textContent = "Network error.";
+    importBtn.disabled = false;
+    importBtn.textContent = "Upload";
   }
 }
 </script>
