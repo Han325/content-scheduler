@@ -9,6 +9,9 @@ import os
 import json
 import logging
 
+# Allow Google to return a subset of requested scopes without crashing
+os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
+
 _QUOTA_FILE = "quota_state.json"
 from datetime import datetime, timezone
 from typing import Optional
