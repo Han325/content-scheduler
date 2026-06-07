@@ -51,18 +51,23 @@ templates.env.globals["format_duration"] = _format_duration
 # ---------------------------------------------------------------------------
 
 def _sign_session(user_id: int) -> str:
-    payload = _json.dumps({"uid": user_id}).encode()
-    sig = hmac.new(settings.SESSION_SECRET.encode(), payload, hashlib.sha256).digest()
-    return base64.urlsafe_b64encode(payload + b"|" + sig).decode()
+    # payload.hexsig — base64url payload + hex HMAC so the separator is safe
+    payload = base64.urlsafe_b64encode(
+        _json.dumps({"uid": user_id}).encode()
+    ).rstrip(b"=").decode()
+    sig = hmac.new(settings.SESSION_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    return f"{payload}.{sig}"
 
 
 def _verify_session(token: str) -> int:
-    data = base64.urlsafe_b64decode(token.encode() + b"==")
-    payload, sig = data.rsplit(b"|", 1)
-    expected = hmac.new(settings.SESSION_SECRET.encode(), payload, hashlib.sha256).digest()
+    if "." not in token:
+        raise ValueError("Invalid token format")
+    payload_b64, sig = token.rsplit(".", 1)
+    expected = hmac.new(settings.SESSION_SECRET.encode(), payload_b64.encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(sig, expected):
         raise ValueError("Invalid session signature")
-    return _json.loads(payload)["uid"]
+    pad = (4 - len(payload_b64) % 4) % 4
+    return _json.loads(base64.urlsafe_b64decode(payload_b64 + "=" * pad))["uid"]
 
 
 # ---------------------------------------------------------------------------
