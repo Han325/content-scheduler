@@ -58,9 +58,21 @@ def init_db():
     from app import models  # noqa: F401
     Base.metadata.create_all(bind=engine)
     from sqlalchemy import text
+    _migrations = [
+        "ALTER TABLE videos ADD COLUMN dismissed BOOLEAN NOT NULL DEFAULT 0",
+        "ALTER TABLE lineup_slots ADD COLUMN user_id INTEGER",
+        "ALTER TABLE backlog_videos ADD COLUMN user_id INTEGER",
+        "ALTER TABLE external_watches ADD COLUMN user_id INTEGER",
+        "ALTER TABLE rejected_videos ADD COLUMN user_id INTEGER",
+        # ExternalWatch previously had a unique constraint on youtube_id alone;
+        # with multi-user the same video ID can appear for different users.
+        # SQLite doesn't support DROP CONSTRAINT, so we leave it — the unique
+        # index was never created via SQLAlchemy (it was just a column kwarg).
+    ]
     with engine.connect() as conn:
-        try:
-            conn.execute(text("ALTER TABLE videos ADD COLUMN dismissed BOOLEAN NOT NULL DEFAULT 0"))
-            conn.commit()
-        except Exception:
-            pass  # column already exists
+        for sql in _migrations:
+            try:
+                conn.execute(text(sql))
+                conn.commit()
+            except Exception:
+                pass  # column / constraint already exists

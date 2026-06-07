@@ -724,15 +724,17 @@ header.masthead   { view-transition-name: site-header; }
     grid-template-columns: 1fr auto;
     row-gap: 0.9rem;
   }
-  .channel-nav { order: 3; grid-column: 1 / -1; justify-self: start; gap: 1.6rem; }
+  .channel-nav { order: 3; grid-column: 1 / -1; justify-self: start; gap: 1.2rem; }
   .broadcast-clock { justify-self: end; }
   .program {
     grid-template-columns: 88px 1fr;
     row-gap: 1rem;
   }
   .slot-time .start { font-size: 1.15rem; }
-  .prog-action { grid-column: 2; justify-content: flex-start; }
+  .prog-action { grid-column: 2; justify-content: flex-start; flex-wrap: wrap; gap: 0.4rem; }
   .rundown.no-rail .program { grid-template-columns: 2rem 1fr; }
+  .nav-refresh { font-size: 0.72rem; padding: 0.22rem 0.5rem; letter-spacing: 0.08em; }
+  .nav-tab { font-size: 0.82rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1002,4 +1004,62 @@ header.masthead   { view-transition-name: site-header; }
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--dim);
+}
+
+/* === Login page ================================================== */
+.login-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+}
+.login-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.6rem;
+  padding: 3rem 2.5rem;
+  border: 1px solid var(--line-soft);
+  max-width: 360px;
+  width: 100%;
+}
+.login-ident {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+}
+.login-ident .ident-mark { font-size: 1.8rem; }
+.login-tagline {
+  font-size: 0.92rem;
+  color: var(--dim);
+  text-align: center;
+  line-height: 1.6;
+  margin: 0;
+}
+.btn-google {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: oklch(0.18 0.01 265);
+  border: 1px solid var(--line-soft);
+  color: var(--air-bright);
+  font-family: var(--font-sans);
+  font-size: 0.94rem;
+  font-weight: 500;
+  padding: 0.65rem 1.4rem;
+  border-radius: 3px;
+  text-decoration: none;
+  transition: border-color 0.18s, background 0.18s;
+  width: 100%;
+  justify-content: center;
+}
+.btn-google svg { width: 18px; height: 18px; flex-shrink: 0; }
+.btn-google:hover { border-color: var(--air); background: oklch(0.22 0.01 265); }
+.login-note {
+  font-family: var(--font-mono);
+  font-size: 0.70rem;
+  letter-spacing: 0.1em;
+  color: var(--faint);
+  text-align: center;
+  margin: 0;
 }

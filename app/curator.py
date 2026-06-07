@@ -161,7 +161,7 @@ def _days_since_published(published_at: Optional[datetime]) -> Optional[float]:
     return delta.total_seconds() / 86400
 
 
-def _compute_channel_reputations(db: Session) -> dict:
+def _compute_channel_reputations(db: Session, user_id: Optional[int] = None) -> dict:
     """
     Derive a per-channel reputation score from watch and reject history.
 
@@ -171,15 +171,17 @@ def _compute_channel_reputations(db: Session) -> dict:
 
     Returns dict of channel_id -> float in the range [-0.3, +0.3].
     """
-    watched_channel_ids = [
-        slot.video.channel_id
-        for slot in db.query(LineupSlot).filter(LineupSlot.is_watched == True).all()  # noqa: E712
-    ]
-    watched_channel_ids += [
-        entry.video.channel_id
-        for entry in db.query(BacklogVideo).filter(BacklogVideo.is_watched == True).all()  # noqa: E712
-    ]
-    rejected_channel_ids = [rv.channel_id for rv in db.query(RejectedVideo).all()]
+    q_slots = db.query(LineupSlot).filter(LineupSlot.is_watched == True)  # noqa: E712
+    q_backlog = db.query(BacklogVideo).filter(BacklogVideo.is_watched == True)  # noqa: E712
+    q_rejected = db.query(RejectedVideo)
+    if user_id is not None:
+        q_slots = q_slots.filter(LineupSlot.user_id == user_id)
+        q_backlog = q_backlog.filter(BacklogVideo.user_id == user_id)
+        q_rejected = q_rejected.filter(RejectedVideo.user_id == user_id)
+
+    watched_channel_ids = [slot.video.channel_id for slot in q_slots.all()]
+    watched_channel_ids += [entry.video.channel_id for entry in q_backlog.all()]
+    rejected_channel_ids = [rv.channel_id for rv in q_rejected.all()]
 
     watch_counts = Counter(watched_channel_ids)
     reject_counts = Counter(rejected_channel_ids)
@@ -240,6 +242,7 @@ def filter_videos(
     videos: list[Video],
     db: Session,
     today: Optional[date] = None,
+    user_id: Optional[int] = None,
 ) -> list[Video]:
     """
     Remove videos that don't pass quality rules or are already seen.
@@ -250,30 +253,27 @@ def filter_videos(
     # Collect already-seen youtube_ids
     watched_ids: set[str] = set()
 
-    # Watched in lineup (any date)
-    watched_slots = db.query(LineupSlot).filter(LineupSlot.is_watched == True).all()  # noqa: E712
-    for slot in watched_slots:
+    def _q(Model, **filters):
+        q = db.query(Model)
+        if user_id is not None:
+            q = q.filter(getattr(Model, "user_id") == user_id)
+        for k, v in filters.items():
+            q = q.filter(getattr(Model, k) == v)
+        return q
+
+    for slot in _q(LineupSlot, is_watched=True).all():
         watched_ids.add(slot.video.youtube_id)
-
-    # Watched in backlog
-    watched_backlog = db.query(BacklogVideo).filter(BacklogVideo.is_watched == True).all()  # noqa: E712
-    for entry in watched_backlog:
+    for entry in _q(BacklogVideo, is_watched=True).all():
         watched_ids.add(entry.video.youtube_id)
-
-    # Imported YouTube watch history (Google Takeout)
-    for ew in db.query(ExternalWatch).all():
+    for ew in _q(ExternalWatch).all():
         watched_ids.add(ew.youtube_id)
-
-    # Explicitly rejected by the user
-    for rv in db.query(RejectedVideo).all():
+    for rv in _q(RejectedVideo).all():
         watched_ids.add(rv.youtube_id)
 
-    # Already in today's lineup
-    todays_slots = db.query(LineupSlot).filter(LineupSlot.date == today).all()
+    todays_slots = _q(LineupSlot, date=today).all()
     todays_ids: set[str] = {slot.video.youtube_id for slot in todays_slots}
 
-    # Already in backlog (unwatched)
-    backlog_entries = db.query(BacklogVideo).filter(BacklogVideo.is_watched == False).all()  # noqa: E712
+    backlog_entries = _q(BacklogVideo, is_watched=False).all()
     backlog_ids: set[str] = {entry.video.youtube_id for entry in backlog_entries}
 
     excluded = watched_ids | todays_ids | backlog_ids
@@ -365,11 +365,16 @@ def upsert_video(db: Session, video_data: dict) -> Video:
         return video
 
 
-def _clean_backlog(db: Session) -> int:
+def _clean_backlog(db: Session, user_id: Optional[int] = None) -> int:
     """Remove unwatched backlog entries that fail current title/channel rules, are dismissed, or were rejected."""
     from app.youtube import CHANNEL_NAME_BLOCKLIST
-    rejected_ids = {rv.youtube_id for rv in db.query(RejectedVideo).all()}
-    entries = db.query(BacklogVideo).filter(BacklogVideo.is_watched == False).all()  # noqa: E712
+    q_rejected = db.query(RejectedVideo)
+    q_backlog = db.query(BacklogVideo).filter(BacklogVideo.is_watched == False)  # noqa: E712
+    if user_id is not None:
+        q_rejected = q_rejected.filter(RejectedVideo.user_id == user_id)
+        q_backlog = q_backlog.filter(BacklogVideo.user_id == user_id)
+    rejected_ids = {rv.youtube_id for rv in q_rejected.all()}
+    entries = q_backlog.all()
     removed = 0
     for entry in entries:
         v = entry.video
@@ -385,7 +390,7 @@ def _clean_backlog(db: Session) -> int:
     return removed
 
 
-def run_daily_curation(db: Session) -> dict:
+def run_daily_curation(db: Session, user_id: Optional[int] = None, creds=None) -> dict:
     """
     Full pipeline: fetch -> score -> filter -> build lineup -> persist.
     Returns summary dict.
@@ -393,22 +398,24 @@ def run_daily_curation(db: Session) -> dict:
     from app.youtube import get_subscription_videos, search_topic_videos
 
     today = date.today()
-    logger.info(f"Starting daily curation for {today}")
+    logger.info(f"Starting daily curation for user_id={user_id} on {today}")
 
     # Clear today's unwatched slots so each Refresh produces a clean lineup
-    stale = db.query(LineupSlot).filter(
+    q_stale = db.query(LineupSlot).filter(
         LineupSlot.date == today,
         LineupSlot.is_watched == False,  # noqa: E712
-    ).all()
-    for slot in stale:
+    )
+    if user_id is not None:
+        q_stale = q_stale.filter(LineupSlot.user_id == user_id)
+    for slot in q_stale.all():
         db.delete(slot)
     db.commit()
 
-    _clean_backlog(db)
+    _clean_backlog(db, user_id)
 
     # Fetch
-    sub_videos_raw = get_subscription_videos(max_results=50)
-    topic_videos_raw = search_topic_videos()
+    sub_videos_raw = get_subscription_videos(creds=creds, max_results=50)
+    topic_videos_raw = search_topic_videos(creds=creds)
 
     # Tag topic videos
     for v in topic_videos_raw:
@@ -434,11 +441,11 @@ def run_daily_curation(db: Session) -> dict:
             unique_videos.append(v)
 
     # Filter
-    eligible = filter_videos(unique_videos, db, today)
+    eligible = filter_videos(unique_videos, db, today, user_id=user_id)
     logger.info(f"{len(eligible)} videos passed filters")
 
     # Channel reputation from past behaviour
-    channel_reputations = _compute_channel_reputations(db)
+    channel_reputations = _compute_channel_reputations(db, user_id=user_id)
     logger.info(f"Reputation scores computed for {len(channel_reputations)} channels")
 
     # Build lineup
@@ -452,13 +459,15 @@ def run_daily_curation(db: Session) -> dict:
             f"Lineup only {lineup_total // 60}m — promoting backlog to fill gap"
         )
         lineup_ids = {v.youtube_id for v in lineup_videos}
-        backlog_candidates = (
+        q_backlog_candidates = (
             db.query(BacklogVideo)
             .filter(BacklogVideo.is_watched == False)  # noqa: E712
             .join(Video)
             .order_by(Video.score.desc())
-            .all()
         )
+        if user_id is not None:
+            q_backlog_candidates = q_backlog_candidates.filter(BacklogVideo.user_id == user_id)
+        backlog_candidates = q_backlog_candidates.all()
         for entry in backlog_candidates:
             if lineup_total >= target_seconds:
                 break
@@ -481,6 +490,7 @@ def run_daily_curation(db: Session) -> dict:
             date=today,
             video_id=video.id,
             position=i,
+            user_id=user_id,
         )
         db.add(slot)
 
@@ -495,7 +505,7 @@ def run_daily_curation(db: Session) -> dict:
                 BacklogVideo.is_watched == False,  # noqa: E712
             ).first()
             if not existing_backlog:
-                db.add(BacklogVideo(video_id=video.id))
+                db.add(BacklogVideo(video_id=video.id, user_id=user_id))
                 backlog_count += 1
 
     db.commit()

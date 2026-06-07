@@ -24,7 +24,12 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 TOKEN_FILE = settings.TOKEN_FILE
-SCOPES = ["https://www.googleapis.com/auth/youtube.readonly"]
+SCOPES = [
+    "https://www.googleapis.com/auth/youtube.readonly",
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
+]
 
 _pending_flow: Optional["Flow"] = None
 
@@ -144,31 +149,40 @@ def _client_config() -> dict:
     }
 
 
-def get_credentials() -> Optional[Credentials]:
-    """Load and refresh credentials from token.json, or return None if not available."""
-    if not os.path.exists(TOKEN_FILE):
-        return None
-
+def credentials_from_json(token_json: str) -> Optional[Credentials]:
+    """Load and refresh credentials from a JSON string stored in the User record."""
     try:
-        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+        creds = Credentials.from_authorized_user_info(json.loads(token_json), SCOPES)
     except Exception as e:
-        logger.warning(f"Could not load token.json: {e}")
+        logger.warning("Could not parse token_json: %s", e)
         return None
-
     if creds and creds.expired and creds.refresh_token:
         try:
             creds.refresh(Request())
-            _save_credentials(creds)
         except Exception as e:
-            logger.warning(f"Could not refresh credentials: {e}")
+            logger.warning("Could not refresh credentials: %s", e)
             return None
+    return creds if (creds and creds.valid) else None
 
-    return creds if creds and creds.valid else None
 
-
-def _save_credentials(creds: Credentials) -> None:
-    with open(TOKEN_FILE, "w") as f:
-        f.write(creds.to_json())
+def get_credentials() -> Optional[Credentials]:
+    """Load credentials from token.json file (local dev fallback)."""
+    if not os.path.exists(TOKEN_FILE):
+        return None
+    try:
+        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+    except Exception as e:
+        logger.warning("Could not load token.json: %s", e)
+        return None
+    if creds and creds.expired and creds.refresh_token:
+        try:
+            creds.refresh(Request())
+            with open(TOKEN_FILE, "w") as f:
+                f.write(creds.to_json())
+        except Exception as e:
+            logger.warning("Could not refresh credentials: %s", e)
+            return None
+    return creds if (creds and creds.valid) else None
 
 
 def get_auth_flow(redirect_uri: str = "http://localhost:8000/auth/callback") -> Flow:
@@ -179,16 +193,25 @@ def get_auth_flow(redirect_uri: str = "http://localhost:8000/auth/callback") -> 
     return flow
 
 
-def exchange_code_for_token(code: str, state: str) -> Credentials:
+def exchange_code_for_token(code: str, state: str) -> tuple:
+    """Complete OAuth flow. Returns (token_json_str, userinfo_dict)."""
     global _pending_flow
     flow = _pending_flow
     if flow is None:
         raise ValueError("No pending OAuth flow. Visit /auth to start authentication.")
     flow.fetch_token(code=code)
     creds = flow.credentials
-    _save_credentials(creds)
     _pending_flow = None
-    return creds
+
+    import urllib.request
+    req = urllib.request.Request(
+        "https://www.googleapis.com/oauth2/v2/userinfo",
+        headers={"Authorization": f"Bearer {creds.token}"},
+    )
+    with urllib.request.urlopen(req) as resp:
+        userinfo = json.loads(resp.read())
+
+    return creds.to_json(), userinfo
 
 
 def _build_youtube(creds: Credentials):
@@ -280,9 +303,10 @@ def _video_ids_to_details(youtube, video_ids: list[str]) -> list[dict]:
     return videos
 
 
-def get_subscription_videos(max_results: int = 50) -> list[dict]:
+def get_subscription_videos(creds: Optional[Credentials] = None, max_results: int = 50) -> list[dict]:
     """Fetch recent uploads from subscribed channels."""
-    creds = get_credentials()
+    if creds is None:
+        creds = get_credentials()
     if not creds:
         logger.warning("No YouTube credentials available. Skipping subscription fetch.")
         return []
@@ -367,9 +391,10 @@ def get_subscription_videos(max_results: int = 50) -> list[dict]:
     return _video_ids_to_details(youtube, video_ids)
 
 
-def search_topic_videos(queries: Optional[list[str]] = None, max_results_per_query: int = 10) -> list[dict]:
+def search_topic_videos(creds: Optional[Credentials] = None, queries: Optional[list[str]] = None, max_results_per_query: int = 10) -> list[dict]:
     """Search for videos matching topic keywords."""
-    creds = get_credentials()
+    if creds is None:
+        creds = get_credentials()
     if not creds:
         logger.warning("No YouTube credentials available. Skipping topic search.")
         return []

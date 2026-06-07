@@ -19,6 +19,8 @@ class Settings:
     CRON_SECRET: str = os.getenv("CRON_SECRET", "")
     # Password for HTTP Basic Auth — set this to lock the app to just you
     APP_PASSWORD: str = os.getenv("APP_PASSWORD", "")
+    # Secret for signing session cookies — must be set in production
+    SESSION_SECRET: str = os.getenv("SESSION_SECRET", "dev-secret-change-in-production")
     @property
     def daily_budget_minutes(self) -> int:
         env_val = os.getenv("DAILY_BUDGET_MINUTES")

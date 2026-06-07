@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Error {{ status_code }} — Lineup{% endblock %}
+
+{% block content %}
+<header class="masthead">
+  <div class="ident">
+    <a href="/" class="ident-mark">Lineup</a>
+    <div class="bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+  </div>
+</header>
+<div class="masthead-rule"></div>
+
+<div class="notice">
+  <div class="notice-title">{{ status_code }}</div>
+  <div class="notice-sub">{{ detail }}</div>
+  <a class="btn-build" href="/">Back to lineup &rarr;</a>
+</div>
+{% endblock %}

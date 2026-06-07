@@ -83,11 +83,16 @@ if (-not $Update) {
     Store-Secret "lineup-cron-secret" $CRON_SECRET
     Write-Host "Cron secret generated and stored."
 
-    $APP_PASSWORD = Read-Host "Choose an app password (protects the UI)"
+    $SESSION_SECRET = (python -c "import secrets; print(secrets.token_urlsafe(48))").Trim()
+    Store-Secret "lineup-session-secret" $SESSION_SECRET
+    Write-Host "Session secret generated and stored."
+
+    $APP_PASSWORD = Read-Host "Choose an app password (protects the UI, leave blank to disable)"
     Store-Secret "lineup-app-password" $APP_PASSWORD
 } else {
-    $CRON_SECRET  = (gcloud secrets versions access latest --secret="lineup-cron-secret").Trim()
-    $APP_PASSWORD = (gcloud secrets versions access latest --secret="lineup-app-password").Trim()
+    $CRON_SECRET     = (gcloud secrets versions access latest --secret="lineup-cron-secret").Trim()
+    $SESSION_SECRET  = (gcloud secrets versions access latest --secret="lineup-session-secret").Trim()
+    $APP_PASSWORD    = (gcloud secrets versions access latest --secret="lineup-app-password").Trim()
 }
 
 # -- 5. Grant required permissions to the Cloud Run service account -----------
@@ -120,7 +125,7 @@ gcloud run deploy $SERVICE `
     --add-volume "name=data,type=cloud-storage,bucket=$BUCKET" `
     --add-volume-mount "volume=data,mount-path=/mnt/data" `
     --set-env-vars "DATABASE_URL=sqlite:////tmp/lineup.db,GCS_DB_PATH=/mnt/data/lineup.db,TOKEN_FILE=/mnt/data/token.json,DISABLE_SCHEDULER=true,TZ=Asia/Kuala_Lumpur" `
-    --set-secrets "YOUTUBE_CLIENT_ID=lineup-yt-client-id:latest,YOUTUBE_CLIENT_SECRET=lineup-yt-client-secret:latest,CRON_SECRET=lineup-cron-secret:latest,APP_PASSWORD=lineup-app-password:latest" `
+    --set-secrets "YOUTUBE_CLIENT_ID=lineup-yt-client-id:latest,YOUTUBE_CLIENT_SECRET=lineup-yt-client-secret:latest,CRON_SECRET=lineup-cron-secret:latest,APP_PASSWORD=lineup-app-password:latest,SESSION_SECRET=lineup-session-secret:latest" `
     --allow-unauthenticated
 
 # -- 6. Grab the service URL --------------------------------------------------
