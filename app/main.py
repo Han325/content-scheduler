@@ -228,12 +228,6 @@ def auth_callback(request: Request, code: str, state: Optional[str] = None, db: 
     email = userinfo.get("email", "")
     name = userinfo.get("name", "")
 
-    # Check invite list (empty = open to any Google account)
-    if settings.ALLOWED_EMAILS:
-        allowed = {e.strip().lower() for e in settings.ALLOWED_EMAILS.split(",") if e.strip()}
-        if email.lower() not in allowed:
-            raise HTTPException(status_code=403, detail="This account is not on the invite list.")
-
     # Find or create user
     user = db.query(User).filter(User.google_sub == google_sub).first()
     is_new_user = user is None

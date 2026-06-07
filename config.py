@@ -19,8 +19,6 @@ class Settings:
     CRON_SECRET: str = os.getenv("CRON_SECRET", "")
     # Secret for signing session cookies — must be set in production
     SESSION_SECRET: str = os.getenv("SESSION_SECRET", "dev-secret-change-in-production")
-    # Comma-separated list of allowed Google email addresses. Empty = allow any Google account.
-    ALLOWED_EMAILS: str = os.getenv("ALLOWED_EMAILS", "")
     @property
     def daily_budget_minutes(self) -> int:
         env_val = os.getenv("DAILY_BUDGET_MINUTES")
